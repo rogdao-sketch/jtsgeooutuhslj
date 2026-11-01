@@ -100,3 +100,11 @@ body.is-grabbing, body.is-grabbing canvas { cursor: grabbing; user-select: none;
 .fallback p { margin: 0; font-size: 11px; opacity: .8; text-transform: none; letter-spacing: .04em; }
 .fallback footer { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .hud__bl i { animation: none; } .hud__bc { animation: none; } }
+
+.callout { display: flex; flex-direction: column; gap: 3px; white-space: nowrap; color: #f4f6fa; font-size: 11px; letter-spacing: .14em;
+  text-transform: uppercase; text-shadow: 0 0 2px rgba(20, 26, 40, .8), 0 0 10px rgba(20, 26, 40, .5); }
+.callout b { font-weight: 500; }
+.callout span { opacity: .8; }
+.callout--left { transform: translate(0, -110%); }
+.callout--right { transform: translate(-100%, -110%); align-items: flex-end; }
+@media (max-width: 640px) { .callout { font-size: 9px; } }

@@ -7,8 +7,8 @@ import { useRayHover } from '../lib/hover'
 import { HoverNet, type NetNode } from './HoverNet'
 
 const BASE = import.meta.env.BASE_URL
-const MODEL = `${BASE}models/lighthouse.glb`
-const DRACO = `${BASE}draco/`
+export const MODEL = `${BASE}models/lighthouse.glb`
+export const DRACO = `${BASE}draco/`
 export const LAMP_Y = 7.02
 
 /**

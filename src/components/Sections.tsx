@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Html, useTexture } from '@react-three/drei'
+import { Html, useGLTF, useTexture } from '@react-three/drei'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { ImprovedNoise } from 'three/examples/jsm/math/ImprovedNoise.js'
-import { CHAPTERS, SECTION_Y, progress } from '../lib/journey'
+import { CHAPTERS, SECTION_Y, darknessAt, progress } from '../lib/journey'
+import { quality } from '../lib/quality'
+import { DRACO, MODEL } from './Lighthouse'
 import { useRayHover } from '../lib/hover'
 import { applyTriplanar, triMaps } from '../lib/triplanar'
 import { HoverNet, type NetNode } from './HoverNet'
@@ -31,92 +33,168 @@ const fbm3 = (v: THREE.Vector3, f: number, oct = 4) => {
   return s
 }
 
-// ---------- 02: an ice floe; a fine survey grid crawls over its shell under the cursor ----------
-function iceGeometry(seed: number, detail: number) {
-  let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, detail)
-  g.deleteAttribute('normal')
-  g.deleteAttribute('uv')
-  g = mergeVertices(g)
-  // broken faces: a few cutting planes flatten the blob like split ice
-  const planes = Array.from({ length: 9 }, (_, i) => {
-    const phi = Math.acos(1 - 2 * ((i + 0.5) / 9)), th = i * 2.399963 + seed
-    return { n: new THREE.Vector3(Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th)), d: 0.62 + ((i * 7 + seed * 13) % 5) * 0.06 }
+// ---------- 02: a clear ice crystal with a small lighthouse frozen inside ----------
+/** Tall chunk of ice: a lumpy blob trimmed by many cutting planes (split faces), with fine chipping. */
+function shapeCrystal(g: THREE.BufferGeometry, seed: number) {
+  const planes = Array.from({ length: 15 }, (_, i) => {
+    const phi = Math.acos(1 - 2 * ((i + 0.5) / 15)), th = i * 2.399963 + seed
+    return { n: new THREE.Vector3(Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th)), d: 0.58 + ((i * 7 + seed * 13) % 6) * 0.045 }
   })
   const p = g.attributes.position as THREE.BufferAttribute
   const v = new THREE.Vector3(), q = new THREE.Vector3()
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i).normalize()
-    const r = 1 + 0.16 * fbm3(v, 1.6 + seed * 0.1) + 0.04 * fbm3(v, 6)
+    const r = 1 + 0.12 * fbm3(v, 1.4 + seed * 0.1) + 0.03 * Math.abs(fbm3(v, 7))
     q.copy(v).multiplyScalar(r)
-    for (const pl of planes) { const dd = q.dot(pl.n); if (dd > pl.d) q.addScaledVector(pl.n, -(dd - pl.d) * 0.93) }
-    q.set(q.x * 2.3, q.y * 1.1, q.z * 1.7)
-    if (q.y > 0.62) q.y = 0.62 + (q.y - 0.62) * 0.12 // flat, snowy top of a floe
+    for (const pl of planes) { const dd = q.dot(pl.n); if (dd > pl.d) q.addScaledVector(pl.n, -(dd - pl.d) * 0.97) }
+    q.set(q.x * 1.35, q.y * 2.1, q.z * 1.15)
     p.setXYZ(i, q.x, q.y, q.z)
   }
   g.computeVertexNormals()
   return g
 }
 
-function IceFloe() {
+function crystalGeometry(seed: number, detail: number) {
+  let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, detail)
+  g.deleteAttribute('normal')
+  g.deleteAttribute('uv')
+  g = mergeVertices(g)
+  return shapeCrystal(g, seed)
+}
+
+/** Faint triangle mesh over the crystal that lights up around the cursor. */
+const wireShader = {
+  vertexShader: `varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `varying vec3 vW; uniform vec3 uHit; uniform float uAmt; uniform float uBase;
+    void main() { float a = uBase + uAmt * (1.0 - smoothstep(0.15, 1.5, distance(vW, uHit)));
+      gl_FragColor = vec4(vec3(1.35, 1.45, 1.6) * a, a); }`,
+}
+
+function Callout({ anchor, elbow, end, align, title, sub, live }: {
+  anchor: [number, number, number]; elbow: [number, number, number]; end: [number, number, number]
+  align: 'left' | 'right'; title: string; sub?: string; live?: boolean
+}) {
+  const line = useMemo(() => {
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...anchor), new THREE.Vector3(...elbow), new THREE.Vector3(...end)])
+    const m = new THREE.LineBasicMaterial({ color: new THREE.Color(1.3, 1.35, 1.45), transparent: true, toneMapped: false, depthTest: false })
+    return new THREE.Line(g, m)
+  }, [anchor, elbow, end])
+  const box = useRef<HTMLDivElement>(null)
+  const num = useRef<HTMLSpanElement>(null)
+  const tick = useRef(0)
+  useFrame(({ clock }) => {
+    const vis = (1 - smooth(Math.abs(localD(1)), 0.15, 0.35)) * (1 - Math.min(1, darknessAt(progress.v) * 3))
+    ;(line.material as THREE.LineBasicMaterial).opacity = vis * 0.8
+    if (box.current) box.current.style.opacity = String(vis)
+    if (live && num.current && clock.elapsedTime - tick.current > 0.18) {
+      tick.current = clock.elapsedTime
+      num.current.textContent = `${(-18.6 + Math.sin(clock.elapsedTime * 0.7) * 1.4 + Math.random() * 0.08).toFixed(2)}° · ${(4.27 + Math.random() * 0.04).toFixed(2)}`
+    }
+  })
+  return (
+    <group>
+      <primitive object={line} renderOrder={22} />
+      <Html position={end} zIndexRange={[8, 0]} style={{ pointerEvents: 'none' }}>
+        <div ref={box} className={`callout callout--${align}`} style={{ opacity: 0 }}>
+          <b>{title}</b>
+          {live ? <span ref={num}>-18.60° · 4.27</span> : sub && <span>{sub}</span>}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+/** A loose constellation beside the crystal: crosses joined by thin lines, slowly turning. */
+function Constellation() {
+  const ref = useRef<THREE.Group>(null)
+  const { lines, dots } = useMemo(() => {
+    const pts = [[0, 0, 0], [0.9, 0.7, 0.2], [1.5, -0.2, -0.3], [0.7, -0.9, 0.1], [1.9, 0.9, -0.5]].map((a) => new THREE.Vector3(a[0], a[1], a[2]))
+    const seg = [0, 1, 1, 2, 2, 3, 3, 0, 1, 4, 2, 4].map((i) => pts[i])
+    return {
+      lines: new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(seg),
+        new THREE.LineBasicMaterial({ color: new THREE.Color(1.2, 1.25, 1.35), transparent: true, opacity: 0.55, toneMapped: false })),
+      dots: new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.PointsMaterial({ color: new THREE.Color(1.6, 1.6, 1.7), size: 5, sizeAttenuation: false, toneMapped: false })),
+    }
+  }, [])
+  useFrame(({ clock }) => { if (ref.current) ref.current.rotation.set(Math.sin(clock.elapsedTime * 0.2) * 0.2, clock.elapsedTime * 0.08, 0) })
+  return <group ref={ref} position={[2.6, 1.4, -0.6]}><primitive object={lines} /><primitive object={dots} /></group>
+}
+
+function Crystal() {
   const group = useRef<THREE.Group>(null)
   const ice = useRef<THREE.Mesh>(null)
-  const geo = useMemo(() => iceGeometry(1, 28), [])
-  const chip = useMemo(() => iceGeometry(4, 6), [])
-  const uniforms = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uHitAmt: { value: 0 }, uTime: { value: 0 } }), [])
+  const geo = useMemo(() => crystalGeometry(1, quality.lensEffects ? 36 : 20), [])
+  const wireGeo = useMemo(() => {
+    let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, 5)
+    g.deleteAttribute('normal')
+    g.deleteAttribute('uv')
+    g = mergeVertices(g)
+    shapeCrystal(g, 1)
+    g.scale(1.012, 1.012, 1.012)
+    return new THREE.WireframeGeometry(g)
+  }, [])
+  const wireU = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uAmt: { value: 0 }, uBase: { value: 0.012 } }), [])
+  const wireMat = useMemo(() => new THREE.ShaderMaterial({ ...wireShader, uniforms: wireU, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), [wireU])
   const mat = useMemo(() => {
     const m = new THREE.MeshPhysicalMaterial({
-      color: '#c2d7ee', roughness: 0.16, transmission: 0.8, thickness: 3, ior: 1.31,
-      attenuationColor: new THREE.Color('#5f8fc4'), attenuationDistance: 1.4, clearcoat: 1, clearcoatRoughness: 0.12, envMapIntensity: 1.5,
-      sheen: 0.4, sheenColor: new THREE.Color('#e8f2ff'),
+      color: '#eef4fb', roughness: 0.05, transmission: 1, thickness: 2.2, ior: 1.31, dispersion: quality.lensEffects ? 0.9 : 0,
+      attenuationColor: new THREE.Color('#b9d0ea'), attenuationDistance: 3.5, clearcoat: 1, clearcoatRoughness: 0.04,
+      specularIntensity: 1, envMapIntensity: 1.8,
     })
-    applyTriplanar(m, triMaps('rock_boulder_dry'), {
-      scale: 0.8, mix: 0.18, normal: 0.35, snow: 0.6, key: 'ice',
-      extra: (shader) => {
-        Object.assign(shader.uniforms, uniforms)
-        shader.fragmentShader = shader.fragmentShader
-          .replace('#include <common>', '#include <common>\nuniform vec3 uHit;\nuniform float uHitAmt;\nuniform float uTime;')
-          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-            {
-              // fine grid on the shell, fading out from the cursor
-              float dh = distance(vTriPos, uHit);
-              float m = uHitAmt * (1.0 - smoothstep(0.2, 1.15, dh));
-              vec3 gp = vTriPos / 0.085;
-              vec3 gq = abs(fract(gp - 0.5) - 0.5) / max(fwidth(gp), vec3(1e-4));
-              float line = (1.0 - min(min(gq.y, gq.z), 1.0)) * triWt.x
-                         + (1.0 - min(min(gq.x, gq.z), 1.0)) * triWt.y
-                         + (1.0 - min(min(gq.x, gq.y), 1.0)) * triWt.z;
-              float ring = 1.0 - smoothstep(0.0, 0.02, abs(dh - 0.5 - 0.07 * sin(uTime * 2.4)));
-              totalEmissiveRadiance += vec3(0.85, 0.93, 1.0) * (line * 0.75 + ring * 0.6) * m * 1.5;
-            }`)
-      },
-    })
+    // melt ripples and frosted patches from the stone grain, almost no colour change
+    applyTriplanar(m, triMaps('rock_boulder_dry'), { scale: 1.3, mix: 0.06, normal: 0.3, snow: 0.12, key: 'crystal' })
     return m
-  }, [uniforms])
-  const chips = useMemo(() => Array.from({ length: 7 }, (_, i) => ({
-    a: (i / 7) * Math.PI * 2, r: 4.6 + (i % 3) * 0.8, y: ((i * 5) % 7 - 3) * 0.45, s: 0.08 + (i % 4) * 0.035,
+  }, [])
+  const { scene } = useGLTF(MODEL, DRACO)
+  const inner = useMemo(() => {
+    // only the tower goes into the ice: the rock and boulders would poke out of it
+    const c = scene.clone(true)
+    const drop: THREE.Object3D[] = []
+    c.traverse((o) => { if (/Cliff|Boulders|Plinth/.test(o.name)) drop.push(o) })
+    drop.forEach((o) => o.removeFromParent())
+    return c
+  }, [scene])
+  const shards = useMemo(() => Array.from({ length: 5 }, (_, i) => ({
+    a: (i / 5) * Math.PI * 2 + 0.4, r: 3.6 + (i % 2) * 0.9, y: ((i * 5) % 5 - 2) * 0.6, s: 0.1 + (i % 3) * 0.04,
   })), [])
-  const chipRefs = useRef<(THREE.Mesh | null)[]>([])
+  const shardGeo = useMemo(() => crystalGeometry(3, 4), [])
+  const shardRefs = useRef<(THREE.Mesh | null)[]>([])
   const hov = useRayHover(ice, 2.2)
-  useFrame(({ clock }, dt) => {
+  useFrame(({ clock, pointer }, dt) => {
     const t = clock.elapsedTime
-    if (group.current) { group.current.rotation.y += dt * 0.06; group.current.position.y = Math.sin(t * 0.5) * 0.08 }
+    if (group.current) {
+      // sways instead of spinning, so the callouts stay pinned to it
+      group.current.rotation.y += ((Math.sin(t * 0.25) * 0.3 + pointer.x * 0.15) - group.current.rotation.y) * (1 - Math.exp(-dt * 2))
+      group.current.rotation.x += ((-pointer.y * 0.08) - group.current.rotation.x) * (1 - Math.exp(-dt * 2))
+      group.current.position.y = Math.sin(t * 0.5) * 0.06
+    }
     const h = hov.current
-    if (h.target) uniforms.uHit.value.lerp(h.point, h.amt < 0.02 ? 1 : 1 - Math.exp(-dt * 10))
-    uniforms.uHitAmt.value = h.amt
-    uniforms.uTime.value = t
-    chips.forEach((c, i) => {
-      const m = chipRefs.current[i]
+    if (h.target) wireU.uHit.value.lerp(h.point, h.amt < 0.02 ? 1 : 1 - Math.exp(-dt * 10))
+    wireU.uAmt.value = h.amt * 1.1
+    shards.forEach((c, i) => {
+      const m = shardRefs.current[i]
       if (!m) return
-      const a = c.a + t * 0.05
-      m.position.set(Math.cos(a) * c.r, c.y + Math.sin(t * 0.7 + i) * 0.12, Math.sin(a) * c.r)
-      m.rotation.set(t * 0.1 + i, t * 0.07, i)
+      const a = c.a + t * 0.04
+      m.position.set(Math.cos(a) * c.r, c.y + Math.sin(t * 0.6 + i) * 0.1, Math.sin(a) * c.r - 1)
+      m.rotation.set(t * 0.1 + i, t * 0.08, i)
     })
   })
   return (
-    <group ref={group}>
-      <mesh ref={ice} geometry={geo} material={mat} castShadow />
-      {chips.map((c, i) => <mesh key={i} ref={(m) => { chipRefs.current[i] = m }} geometry={chip} material={mat} scale={c.s} />)}
-      <pointLight position={[0, -0.2, 0]} color="#a9c8ff" intensity={14} distance={7} />
+    <group>
+      <group ref={group}>
+        <mesh ref={ice} geometry={geo} material={mat} />
+        <lineSegments geometry={wireGeo} material={wireMat} renderOrder={5} />
+        {/* the lighthouse frozen inside; its lamp is the light in the ice */}
+        <primitive object={inner} scale={0.2} position={[0, -1.15, 0]} rotation={[0, 0.6, 0]} />
+        <pointLight position={[0, 0.25, 0]} color="#ffb066" intensity={5} distance={4} />
+      </group>
+      {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={shardGeo} material={mat} scale={c.s} />)}
+      <Callout anchor={[-0.6, 0.7, 0.95]} elbow={[-1.45, 1.25, 0.95]} end={[-3.0, 1.25, 0.95]} align="left" title="СЦЕНА_02" sub="МАЯК ВО ЛЬДУ" />
+      <Callout anchor={[0.95, 0.55, 0.7]} elbow={[1.75, 1.0, 0.7]} end={[2.7, 1.0, 0.7]} align="right" title="T" live />
+      <Callout anchor={[0.45, -1.15, 1.0]} elbow={[1.35, -1.6, 1.0]} end={[3.0, -1.6, 1.0]} align="right" title="WEBGL 2.0" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
+      <Constellation />
+      <pointLight position={[2, 3, 4]} color="#e8f0ff" intensity={18} distance={14} />
     </group>
   )
 }
@@ -468,7 +546,7 @@ function Exhibition() {
 export function Sections() {
   return (
     <>
-      <Stage chapter={1}><Depths floor={-4.5} seed={1} /><IceFloe /></Stage>
+      <Stage chapter={1}><Depths floor={-4.5} seed={1} /><Crystal /></Stage>
       <Stage chapter={2}><Depths floor={-6.5} seed={2} tilt /><Portal /></Stage>
       <Stage chapter={3}><Depths floor={-4.8} seed={3} /><Depths floor={5.2} seed={5} ceiling /><Thread /></Stage>
       <Stage chapter={4} span={2.2}><Depths floor={-1.7} seed={4} /><Exhibition /></Stage>
