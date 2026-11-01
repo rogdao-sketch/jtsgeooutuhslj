@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { CHAPTERS, SECTION_Y, darknessAt, progress } from '../lib/journey'
 import { quality } from '../lib/quality'
+import { DRACO } from './Lighthouse'
 import { useRayHover } from '../lib/hover'
 import { applyTriplanar, triMaps } from '../lib/triplanar'
 import { HoverNet, type NetNode } from './HoverNet'
@@ -23,7 +24,7 @@ function Stage({ chapter, span = 1, children }: { chapter: number; span?: number
   return <group ref={ref} position={[0, SECTION_Y[Math.min(chapter, SECTION_Y.length - 1)], 0]}>{children}</group>
 }
 
-// ---------- 02: a clear crystal cluster (modelled in Blender) with a crawling grid and ripples under the cursor ----------
+// ---------- 02: a chunk of clear ice (modelled in Blender) with a crawling grid and ripples under the cursor ----------
 const CRYSTAL = `${BASE}models/crystal.glb`
 
 function Callout({ anchor, elbow, end, align, title, sub, live }: {
@@ -80,15 +81,22 @@ function Constellation() {
 function Crystal() {
   const group = useRef<THREE.Group>(null)
   const ice = useRef<THREE.Mesh>(null)
-  const { scene: model } = useGLTF(CRYSTAL)
-  const geo = useMemo(() => {
-    let g: THREE.BufferGeometry | null = null
-    model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !g) g = m.geometry })
-    // faceted look: every triangle keeps its own flat normal
-    const flat = (g as unknown as THREE.BufferGeometry).toNonIndexed()
-    flat.computeVertexNormals()
-    return flat
+  const { scene: model } = useGLTF(CRYSTAL, DRACO)
+  // modelled in Blender: the ice shell, frosted fracture sheets inside it and clusters of air bubbles
+  const { geo, cracks, bubbles } = useMemo(() => {
+    const find = (name: string) => {
+      let g: THREE.BufferGeometry | null = null
+      model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.name.startsWith(name)) g = m.geometry })
+      return g as unknown as THREE.BufferGeometry
+    }
+    return { geo: find('Ice'), cracks: find('Fractures'), bubbles: find('Bubbles') }
   }, [model])
+  // opaque with hashed alpha, so the refraction pass of the ice actually sees them
+  const crackMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#e9f1fc', roughness: 0.45, opacity: 0.5, alphaHash: true, side: THREE.DoubleSide,
+    emissive: new THREE.Color('#d4e3ff'), emissiveIntensity: 0.3,
+  }), [])
+  const bubbleMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.1, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.45 }), [])
   const uniforms = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uHitAmt: { value: 0 }, uTime: { value: 0 } }), [])
   const mat = useMemo(() => {
     const m = new THREE.MeshPhysicalMaterial({
@@ -153,13 +161,17 @@ function Crystal() {
   return (
     <group>
       <group ref={group}>
-        <mesh ref={ice} geometry={geo} material={mat} scale={0.95} />
+        <group scale={0.95}>
+          <mesh ref={ice} geometry={geo} material={mat} />
+          <mesh geometry={cracks} material={crackMat} />
+          <mesh geometry={bubbles} material={bubbleMat} />
+        </group>
         <pointLight position={[0, 0.2, 0]} color="#cfe0ff" intensity={6} distance={5} />
       </group>
-      {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={geo} material={mat} scale={c.s} />)}
-      <Callout anchor={[-0.55, 0.9, 0.6]} elbow={[-1.5, 1.4, 0.6]} end={[-3.0, 1.4, 0.6]} align="left" title="СЦЕНА_02" sub="ЛЁД / WEBGL" />
+      {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={geo} material={mat} scale={c.s * 1.4} />)}
+      <Callout anchor={[-0.55, 0.9, 0.6]} elbow={[-1.5, 1.4, 0.6]} end={[-3.0, 1.4, 0.6]} align="left" title="СЦЕНА_02" sub="ЧИСТЫЙ ЛЁД" />
       <Callout anchor={[0.6, 0.2, 0.5]} elbow={[1.55, 0.75, 0.5]} end={[2.7, 0.75, 0.5]} align="right" title="T" live />
-      <Callout anchor={[0.5, -1.25, 0.7]} elbow={[1.35, -1.6, 0.7]} end={[3.0, -1.6, 0.7]} align="right" title="ГРАНЕЙ 908" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
+      <Callout anchor={[0.5, -1.25, 0.7]} elbow={[1.35, -1.6, 0.7]} end={[3.0, -1.6, 0.7]} align="right" title="WEBGL 2.0" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
       <Constellation />
       <pointLight position={[2, 3, 4]} color="#e8f0ff" intensity={18} distance={14} />
       <pointLight position={[-3, -1, -3]} color="#c8d8ff" intensity={14} distance={12} />
