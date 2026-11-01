@@ -5,10 +5,21 @@ const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?
 
 export const LOW = coarse || small || cores <= 4
 
+/** The visitor asked the system for less motion: no smooth scroll, no lens tilt, calmer snow. */
+export const REDUCED = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+export const hasWebGL2 = (() => {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2')
+    gl?.getExtension('WEBGL_lose_context')?.loseContext() // free the probe context right away
+    return !!gl
+  } catch { return false }
+})()
+
 export const quality = {
   maxDpr: LOW ? 1.5 : 2,
   terrainSeg: LOW ? 170 : 320,
-  particles: LOW ? 1200 : 2600,
+  particles: REDUCED ? 600 : LOW ? 1200 : 2600,
   shadowMap: LOW ? 1024 : 2048,
   multisampling: LOW ? 0 : 4,
   /** depth of field and chromatic fringing are the most expensive passes */

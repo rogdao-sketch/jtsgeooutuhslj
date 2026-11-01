@@ -343,13 +343,16 @@ function Thread() {
 
 // ---------- 05/06: works as screens set into stone monoliths standing in a turning circle ----------
 const WORKS = [
-  { slug: 'apple-favorite', name: 'Apple Favorite', kind: 'Интернет-магазин техники' },
-  { slug: 'gerbariy', name: 'Гербарий №7', kind: 'Цветочная мастерская' },
-  { slug: 'pole', name: 'ПОЛЕ', kind: 'Цветочная лавка' },
-  { slug: 'maison-petale', name: 'Maison Pétale', kind: 'Цветочный дом' },
-  { slug: 'zerno', name: 'ЗЕРНО', kind: 'Кофейня' },
-  { slug: 'bubble-tea', name: 'Bubble Tea Love', kind: 'Бар бабл-ти' },
+  { slug: 'apple-favorite', name: 'Apple Favorite', kind: 'Интернет-магазин техники', url: 'https://rogday.ru/' },
+  { slug: 'gerbariy', name: 'Гербарий №7', kind: 'Цветочная мастерская', url: 'https://rogday8.github.io/flow-3/' },
+  { slug: 'pole', name: 'ПОЛЕ', kind: 'Цветочная лавка', url: 'https://rogday8.github.io/flow_2/' },
+  { slug: 'maison-petale', name: 'Maison Pétale', kind: 'Цветочный дом', url: 'https://rogday8.github.io/flow_1/' },
+  { slug: 'zerno', name: 'ЗЕРНО', kind: 'Кофейня', url: 'https://rogday8.github.io/coffeerog/' },
+  { slug: 'bubble-tea', name: 'Bubble Tea Love', kind: 'Бар бабл-ти', url: 'https://rogday8.github.io/bubletealove/' },
 ]
+
+/** The work under the cursor, so a click (not a drag) can open it. */
+let hoveredWork: typeof WORKS[number] | null = null
 const RING_R = 6.5
 
 function Monolith({ work, a, geo, stone }: { work: typeof WORKS[number]; a: number; geo: THREE.BufferGeometry; stone: THREE.Material }) {
@@ -366,6 +369,8 @@ function Monolith({ work, a, geo, stone }: { work: typeof WORKS[number]; a: numb
     if (lift.current) lift.current.position.y = h * 0.22
     if (screen.current) screen.current.color.setScalar(0.85 + h * 0.5)
     if (label.current) { label.current.style.opacity = String(h); label.current.style.transform = `translate(-50%, ${(1 - h) * 8}px)` }
+    if (hov.current.target) hoveredWork = work
+    else if (hoveredWork === work) hoveredWork = null
   })
   return (
     <group position={[Math.sin(a) * RING_R, 0, Math.cos(a) * RING_R]} rotation={[0, a, 0]}>
@@ -376,7 +381,7 @@ function Monolith({ work, a, geo, stone }: { work: typeof WORKS[number]; a: numb
           <meshBasicMaterial ref={screen} map={tex} toneMapped={false} />
         </mesh>
         <Html position={[0, -0.75, 0.25]} zIndexRange={[8, 0]} style={{ pointerEvents: 'none' }}>
-          <div className="work-label" ref={label} style={{ opacity: 0 }}><b>{work.name}</b><span>{work.kind}</span></div>
+          <div className="work-label" ref={label} style={{ opacity: 0 }}><b>{work.name}</b><span>{work.kind}</span><i>открыть сайт ↗</i></div>
         </Html>
         {/* warm strip of light at the foot */}
         <mesh position={[0, -2.15, 0.25]}><boxGeometry args={[1.9, 0.03, 0.03]} /><meshBasicMaterial color={[2.4, 1.4, 0.6]} toneMapped={false} /></mesh>
@@ -399,18 +404,24 @@ function Exhibition() {
     return m
   }, [])
   // the circle turns by itself; drag sideways to spin it, it keeps some momentum
-  const spin = useRef({ angle: 0, vel: 0, drag: false, x: 0, active: false })
+  const spin = useRef({ angle: 0, vel: 0, drag: false, x: 0, moved: 0, active: false })
   useEffect(() => {
     const s = spin.current
-    const down = (e: PointerEvent) => { if (!s.active) return; s.drag = true; s.x = e.clientX; document.body.classList.add('is-grabbing') }
+    const down = (e: PointerEvent) => { if (!s.active) return; s.drag = true; s.x = e.clientX; s.moved = 0; document.body.classList.add('is-grabbing') }
     const move = (e: PointerEvent) => {
       if (!s.drag) return
       const dx = e.clientX - s.x
       s.x = e.clientX
+      s.moved += Math.abs(dx)
       s.vel = dx * 0.0045
       s.angle += s.vel
     }
-    const up = () => { s.drag = false; document.body.classList.remove('is-grabbing') }
+    const up = () => {
+      // a click without dragging opens the hovered work
+      if (s.drag && s.moved < 6 && hoveredWork) window.open(hoveredWork.url, '_blank', 'noopener')
+      s.drag = false
+      document.body.classList.remove('is-grabbing')
+    }
     window.addEventListener('pointerdown', down)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -420,13 +431,14 @@ function Exhibition() {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
-      document.body.classList.remove('is-grabbing', 'can-grab')
+      document.body.classList.remove('is-grabbing', 'can-grab', 'can-open')
     }
   }, [])
   useFrame((_, dt) => {
     const s = spin.current
     const active = Math.abs(localD(4)) < 0.45
     if (active !== s.active) { s.active = active; document.body.classList.toggle('can-grab', active) }
+    document.body.classList.toggle('can-open', active && !!hoveredWork && !s.drag)
     if (!s.drag) {
       s.angle += s.vel
       s.vel *= Math.exp(-dt * 2.5)

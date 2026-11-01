@@ -81,8 +81,22 @@ canvas { display: block; position: fixed !important; inset: 0; }
 }
 
 body.can-grab canvas { cursor: grab; }
+body.can-open canvas { cursor: pointer; }
 body.is-grabbing, body.is-grabbing canvas { cursor: grabbing; user-select: none; }
 .work-label { display: flex; flex-direction: column; align-items: center; gap: 4px; transform: translate(-50%, 8px); white-space: nowrap;
   color: #f4f6fa; text-transform: uppercase; letter-spacing: .14em; font-size: 10px; text-shadow: 0 0 2px rgba(20, 26, 40, .9), 0 0 10px rgba(20, 26, 40, .6); }
 .work-label b { font-weight: 500; font-size: 12px; }
 .work-label span { opacity: .75; }
+.work-label i { font-style: normal; font-size: 9px; opacity: .6; margin-top: 4px; }
+
+.fallback { min-height: 100vh; padding: 32px; box-sizing: border-box; color: var(--ink); background: var(--fog) center / cover no-repeat;
+  display: flex; flex-direction: column; gap: 40px; text-transform: uppercase; letter-spacing: .12em; }
+.fallback header { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
+.fallback header b { font-size: 20px; letter-spacing: .3em; font-weight: 500; }
+.fallback ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 28px; max-width: 640px; }
+.fallback li { background: rgba(42, 49, 66, .45); padding: 18px 20px; border-radius: 6px; backdrop-filter: blur(6px); }
+.fallback small { font-size: 10px; opacity: .75; }
+.fallback h2 { margin: 8px 0 6px; font-size: 15px; font-weight: 500; }
+.fallback p { margin: 0; font-size: 11px; opacity: .8; text-transform: none; letter-spacing: .04em; }
+.fallback footer { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { .hud__bl i { animation: none; } .hud__bc { animation: none; } }

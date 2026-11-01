@@ -3,11 +3,17 @@ import Lenis from 'lenis'
 import { Preloader } from './components/Preloader'
 import { Hud } from './components/Hud'
 import { progress } from './lib/journey'
+import { REDUCED, hasWebGL2 } from './lib/quality'
+import { Fallback } from './components/Fallback'
 
 // three.js and the whole scene load as a separate chunk while the preloader runs
 const Scene = lazy(() => import('./components/Scene'))
 
 export default function App() {
+  return hasWebGL2 ? <Journey /> : <Fallback />
+}
+
+function Journey() {
   const [ready, setReady] = useState(false)
   const lenis = useRef<Lenis | null>(null)
   const onDone = useCallback(() => setReady(true), [])
@@ -15,7 +21,7 @@ export default function App() {
   useEffect(() => {
     history.scrollRestoration = 'manual'
     window.scrollTo(0, 0)
-    const l = new Lenis({ lerp: 0.09, wheelMultiplier: 0.9 })
+    const l = new Lenis({ lerp: REDUCED ? 1 : 0.09, wheelMultiplier: 0.9 })
     lenis.current = l
     l.stop()
     l.on('scroll', ({ scroll, limit }: { scroll: number; limit: number }) => {

@@ -13,7 +13,7 @@ import { Sections } from './Sections'
 import { CHAPTERS, darknessAt, progress } from '../lib/journey'
 import { cameraAt, focus } from '../lib/camera'
 import { sound } from '../lib/sound'
-import { quality } from '../lib/quality'
+import { REDUCED, quality } from '../lib/quality'
 import { PerformanceMonitor, useProgress } from '@react-three/drei'
 import { load } from '../lib/load'
 
@@ -168,9 +168,9 @@ function Rig({ intro }: { intro: Ref }) {
     // dive: lens stretches and the horizon tilts a little, then everything settles
     const dive = darknessAt(progress.v)
     const cam = camera as THREE.PerspectiveCamera
-    const fov = 34 + dive * 9
+    const fov = 34 + (REDUCED ? 0 : dive * 9)
     if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix() }
-    camera.rotateZ(Math.sin(progress.v * 23) * dive * 0.04)
+    if (!REDUCED) camera.rotateZ(Math.sin(progress.v * 23) * dive * 0.04)
     sound.update(performance.now() / 1000, dive)
   })
   return null
