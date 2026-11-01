@@ -3,11 +3,8 @@ import { useFrame } from '@react-three/fiber'
 import { Html, useGLTF, useTexture } from '@react-three/drei'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { ImprovedNoise } from 'three/examples/jsm/math/ImprovedNoise.js'
 import { CHAPTERS, SECTION_Y, darknessAt, progress } from '../lib/journey'
 import { quality } from '../lib/quality'
-import { DRACO, MODEL } from './Lighthouse'
 import { useRayHover } from '../lib/hover'
 import { applyTriplanar, triMaps } from '../lib/triplanar'
 import { HoverNet, type NetNode } from './HoverNet'
@@ -26,49 +23,8 @@ function Stage({ chapter, span = 1, children }: { chapter: number; span?: number
   return <group ref={ref} position={[0, SECTION_Y[Math.min(chapter, SECTION_Y.length - 1)], 0]}>{children}</group>
 }
 
-const perlin = new ImprovedNoise()
-const fbm3 = (v: THREE.Vector3, f: number, oct = 4) => {
-  let s = 0, a = 0.5, k = f
-  for (let i = 0; i < oct; i++) { s += a * perlin.noise(v.x * k + i * 3.1, v.y * k, v.z * k); k *= 2.03; a *= 0.5 }
-  return s
-}
-
-// ---------- 02: a clear ice crystal with a small lighthouse frozen inside ----------
-/** Tall chunk of ice: a lumpy blob trimmed by many cutting planes (split faces), with fine chipping. */
-function shapeCrystal(g: THREE.BufferGeometry, seed: number) {
-  const planes = Array.from({ length: 15 }, (_, i) => {
-    const phi = Math.acos(1 - 2 * ((i + 0.5) / 15)), th = i * 2.399963 + seed
-    return { n: new THREE.Vector3(Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th)), d: 0.58 + ((i * 7 + seed * 13) % 6) * 0.045 }
-  })
-  const p = g.attributes.position as THREE.BufferAttribute
-  const v = new THREE.Vector3(), q = new THREE.Vector3()
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i).normalize()
-    const r = 1 + 0.12 * fbm3(v, 1.4 + seed * 0.1) + 0.03 * Math.abs(fbm3(v, 7))
-    q.copy(v).multiplyScalar(r)
-    for (const pl of planes) { const dd = q.dot(pl.n); if (dd > pl.d) q.addScaledVector(pl.n, -(dd - pl.d) * 0.97) }
-    q.set(q.x * 1.35, q.y * 2.1, q.z * 1.15)
-    p.setXYZ(i, q.x, q.y, q.z)
-  }
-  g.computeVertexNormals()
-  return g
-}
-
-function crystalGeometry(seed: number, detail: number) {
-  let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, detail)
-  g.deleteAttribute('normal')
-  g.deleteAttribute('uv')
-  g = mergeVertices(g)
-  return shapeCrystal(g, seed)
-}
-
-/** Faint triangle mesh over the crystal that lights up around the cursor. */
-const wireShader = {
-  vertexShader: `varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
-  fragmentShader: `varying vec3 vW; uniform vec3 uHit; uniform float uAmt; uniform float uBase;
-    void main() { float a = uBase + uAmt * (1.0 - smoothstep(0.15, 1.5, distance(vW, uHit)));
-      gl_FragColor = vec4(vec3(1.35, 1.45, 1.6) * a, a); }`,
-}
+// ---------- 02: a clear crystal cluster (modelled in Blender) with a crawling grid and ripples under the cursor ----------
+const CRYSTAL = `${BASE}models/crystal.glb`
 
 function Callout({ anchor, elbow, end, align, title, sub, live }: {
   anchor: [number, number, number]; elbow: [number, number, number]; end: [number, number, number]
@@ -124,54 +80,68 @@ function Constellation() {
 function Crystal() {
   const group = useRef<THREE.Group>(null)
   const ice = useRef<THREE.Mesh>(null)
-  const geo = useMemo(() => crystalGeometry(1, quality.lensEffects ? 36 : 20), [])
-  const wireGeo = useMemo(() => {
-    let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, 5)
-    g.deleteAttribute('normal')
-    g.deleteAttribute('uv')
-    g = mergeVertices(g)
-    shapeCrystal(g, 1)
-    g.scale(1.012, 1.012, 1.012)
-    return new THREE.WireframeGeometry(g)
-  }, [])
-  const wireU = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uAmt: { value: 0 }, uBase: { value: 0.012 } }), [])
-  const wireMat = useMemo(() => new THREE.ShaderMaterial({ ...wireShader, uniforms: wireU, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), [wireU])
+  const { scene: model } = useGLTF(CRYSTAL)
+  const geo = useMemo(() => {
+    let g: THREE.BufferGeometry | null = null
+    model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !g) g = m.geometry })
+    // faceted look: every triangle keeps its own flat normal
+    const flat = (g as unknown as THREE.BufferGeometry).toNonIndexed()
+    flat.computeVertexNormals()
+    return flat
+  }, [model])
+  const uniforms = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uHitAmt: { value: 0 }, uTime: { value: 0 } }), [])
   const mat = useMemo(() => {
     const m = new THREE.MeshPhysicalMaterial({
-      color: '#eef4fb', roughness: 0.05, transmission: 1, thickness: 2.2, ior: 1.31, dispersion: quality.lensEffects ? 0.9 : 0,
-      attenuationColor: new THREE.Color('#b9d0ea'), attenuationDistance: 3.5, clearcoat: 1, clearcoatRoughness: 0.04,
-      specularIntensity: 1, envMapIntensity: 1.8,
+      color: '#eef4fb', roughness: 0.04, transmission: 1, thickness: 2.4, ior: 1.31, dispersion: quality.lensEffects ? 1.1 : 0,
+      attenuationColor: new THREE.Color('#a9c4e6'), attenuationDistance: 3, clearcoat: 1, clearcoatRoughness: 0.03,
+      specularIntensity: 1, envMapIntensity: 2,
     })
-    // melt ripples and frosted patches from the stone grain, almost no colour change
-    applyTriplanar(m, triMaps('rock_boulder_dry'), { scale: 1.3, mix: 0.06, normal: 0.3, snow: 0.12, key: 'crystal' })
+    applyTriplanar(m, triMaps('rock_boulder_dry'), {
+      scale: 1.6, mix: 0.04, normal: 0.18, snow: 0.06, key: 'crystal2',
+      extra: (shader) => {
+        Object.assign(shader.uniforms, uniforms)
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform vec3 uHit;\nuniform float uHitAmt;\nuniform float uTime;')
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+            {
+              float dh = distance(vTriPos, uHit);
+              float reach = uHitAmt * (1.0 - smoothstep(0.15, 1.45, dh));
+              // ripples running out from the cursor and a slower swell rocking back and forth
+              float ripple = sin(dh * 28.0 - uTime * 9.0) * 0.5 + 0.5;
+              float swell = sin(dh * 6.0 - uTime * 2.6 + sin(uTime * 1.4) * 2.2) * 0.5 + 0.5;
+              // very fine grid that keeps crawling over the ice; the waves bend it
+              vec3 gp = vTriPos / 0.034 + vec3(uTime * 0.9, uTime * 0.55, -uTime * 0.7) + triNw * ripple * 0.35;
+              vec3 gq = abs(fract(gp - 0.5) - 0.5) / max(fwidth(gp) * 0.5, vec3(1e-4));
+              float line = (1.0 - min(min(gq.y, gq.z), 1.0)) * triWt.x
+                         + (1.0 - min(min(gq.x, gq.z), 1.0)) * triWt.y
+                         + (1.0 - min(min(gq.x, gq.y), 1.0)) * triWt.z;
+              float rings = smoothstep(0.93, 1.0, ripple) * reach;
+              totalEmissiveRadiance += vec3(0.85, 0.93, 1.0) * (line * (0.2 + 0.8 * swell) * reach * 0.5 + rings * 0.3);
+              // cold rim on the silhouette so the crystal stands out of the fog
+              float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 2.5);
+              totalEmissiveRadiance += vec3(0.7, 0.82, 1.0) * fres * 0.45;
+            }`)
+      },
+    })
     return m
-  }, [])
-  const { scene } = useGLTF(MODEL, DRACO)
-  const inner = useMemo(() => {
-    // only the tower goes into the ice: the rock and boulders would poke out of it
-    const c = scene.clone(true)
-    const drop: THREE.Object3D[] = []
-    c.traverse((o) => { if (/Cliff|Boulders|Plinth/.test(o.name)) drop.push(o) })
-    drop.forEach((o) => o.removeFromParent())
-    return c
-  }, [scene])
+  }, [uniforms])
   const shards = useMemo(() => Array.from({ length: 5 }, (_, i) => ({
-    a: (i / 5) * Math.PI * 2 + 0.4, r: 3.6 + (i % 2) * 0.9, y: ((i * 5) % 5 - 2) * 0.6, s: 0.1 + (i % 3) * 0.04,
+    a: (i / 5) * Math.PI * 2 + 0.4, r: 3.6 + (i % 2) * 0.9, y: ((i * 5) % 5 - 2) * 0.6, s: 0.12 + (i % 3) * 0.04,
   })), [])
-  const shardGeo = useMemo(() => crystalGeometry(3, 4), [])
   const shardRefs = useRef<(THREE.Mesh | null)[]>([])
   const hov = useRayHover(ice, 2.2)
   useFrame(({ clock, pointer }, dt) => {
     const t = clock.elapsedTime
     if (group.current) {
       // sways instead of spinning, so the callouts stay pinned to it
-      group.current.rotation.y += ((Math.sin(t * 0.25) * 0.3 + pointer.x * 0.15) - group.current.rotation.y) * (1 - Math.exp(-dt * 2))
+      group.current.rotation.y += ((Math.sin(t * 0.25) * 0.35 + pointer.x * 0.18) - group.current.rotation.y) * (1 - Math.exp(-dt * 2))
       group.current.rotation.x += ((-pointer.y * 0.08) - group.current.rotation.x) * (1 - Math.exp(-dt * 2))
       group.current.position.y = Math.sin(t * 0.5) * 0.06
     }
     const h = hov.current
-    if (h.target) wireU.uHit.value.lerp(h.point, h.amt < 0.02 ? 1 : 1 - Math.exp(-dt * 10))
-    wireU.uAmt.value = h.amt * 1.1
+    if (h.target) uniforms.uHit.value.lerp(h.point, h.amt < 0.02 ? 1 : 1 - Math.exp(-dt * 6))
+    uniforms.uHitAmt.value = h.amt
+    uniforms.uTime.value = t
     shards.forEach((c, i) => {
       const m = shardRefs.current[i]
       if (!m) return
@@ -183,18 +153,16 @@ function Crystal() {
   return (
     <group>
       <group ref={group}>
-        <mesh ref={ice} geometry={geo} material={mat} />
-        <lineSegments geometry={wireGeo} material={wireMat} renderOrder={5} />
-        {/* the lighthouse frozen inside; its lamp is the light in the ice */}
-        <primitive object={inner} scale={0.2} position={[0, -1.15, 0]} rotation={[0, 0.6, 0]} />
-        <pointLight position={[0, 0.25, 0]} color="#ffb066" intensity={5} distance={4} />
+        <mesh ref={ice} geometry={geo} material={mat} scale={0.95} />
+        <pointLight position={[0, 0.2, 0]} color="#cfe0ff" intensity={6} distance={5} />
       </group>
-      {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={shardGeo} material={mat} scale={c.s} />)}
-      <Callout anchor={[-0.6, 0.7, 0.95]} elbow={[-1.45, 1.25, 0.95]} end={[-3.0, 1.25, 0.95]} align="left" title="СЦЕНА_02" sub="МАЯК ВО ЛЬДУ" />
-      <Callout anchor={[0.95, 0.55, 0.7]} elbow={[1.75, 1.0, 0.7]} end={[2.7, 1.0, 0.7]} align="right" title="T" live />
-      <Callout anchor={[0.45, -1.15, 1.0]} elbow={[1.35, -1.6, 1.0]} end={[3.0, -1.6, 1.0]} align="right" title="WEBGL 2.0" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
+      {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={geo} material={mat} scale={c.s} />)}
+      <Callout anchor={[-0.55, 0.9, 0.6]} elbow={[-1.5, 1.4, 0.6]} end={[-3.0, 1.4, 0.6]} align="left" title="СЦЕНА_02" sub="ЛЁД / WEBGL" />
+      <Callout anchor={[0.6, 0.2, 0.5]} elbow={[1.55, 0.75, 0.5]} end={[2.7, 0.75, 0.5]} align="right" title="T" live />
+      <Callout anchor={[0.5, -1.25, 0.7]} elbow={[1.35, -1.6, 0.7]} end={[3.0, -1.6, 0.7]} align="right" title="ГРАНЕЙ 908" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
       <Constellation />
       <pointLight position={[2, 3, 4]} color="#e8f0ff" intensity={18} distance={14} />
+      <pointLight position={[-3, -1, -3]} color="#c8d8ff" intensity={14} distance={12} />
     </group>
   )
 }
