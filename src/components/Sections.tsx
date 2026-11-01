@@ -24,7 +24,7 @@ function Stage({ chapter, span = 1, children }: { chapter: number; span?: number
   return <group ref={ref} position={[0, SECTION_Y[Math.min(chapter, SECTION_Y.length - 1)], 0]}>{children}</group>
 }
 
-// ---------- 02: a chunk of clear ice (modelled in Blender) with a crawling grid and ripples under the cursor ----------
+// ---------- 02: melted clear ice (modelled in Blender) with an apple emblem inside; a fine wandering web under the cursor ----------
 const CRYSTAL = `${BASE}models/crystal.glb`
 
 function Callout({ anchor, elbow, end, align, title, sub, live }: {
@@ -82,52 +82,78 @@ function Crystal() {
   const group = useRef<THREE.Group>(null)
   const ice = useRef<THREE.Mesh>(null)
   const { scene: model } = useGLTF(CRYSTAL, DRACO)
-  // modelled in Blender: the ice shell, frosted fracture sheets inside it and clusters of air bubbles
-  const { geo, cracks, bubbles } = useMemo(() => {
+  // modelled in Blender: the melted ice shell, an apple emblem frozen inside and a few air bubbles
+  const { geo, emblem, bubbles } = useMemo(() => {
     const find = (name: string) => {
       let g: THREE.BufferGeometry | null = null
       model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.name.startsWith(name)) g = m.geometry })
       return g as unknown as THREE.BufferGeometry
     }
-    return { geo: find('Ice'), cracks: find('Fractures'), bubbles: find('Bubbles') }
+    return { geo: find('Ice'), emblem: find('Emblem'), bubbles: find('Bubbles') }
   }, [model])
-  // opaque with hashed alpha, so the refraction pass of the ice actually sees them
-  const crackMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#e9f1fc', roughness: 0.45, opacity: 0.5, alphaHash: true, side: THREE.DoubleSide,
-    emissive: new THREE.Color('#d4e3ff'), emissiveIntensity: 0.3,
+  // the emblem glows warm from inside the ice; opaque so the refraction pass sees it
+  const emblemMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#fff4e6', roughness: 0.3, metalness: 0.1, emissive: new THREE.Color('#ffbf80'), emissiveIntensity: 0.55,
   }), [])
-  const bubbleMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.1, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.45 }), [])
+  const bubbleMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.1, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.35 }), [])
   const uniforms = useMemo(() => ({ uHit: { value: new THREE.Vector3(0, -999, 0) }, uHitAmt: { value: 0 }, uTime: { value: 0 } }), [])
   const mat = useMemo(() => {
     const m = new THREE.MeshPhysicalMaterial({
-      color: '#eef4fb', roughness: 0.04, transmission: 1, thickness: 2.4, ior: 1.31, dispersion: quality.lensEffects ? 1.1 : 0,
-      attenuationColor: new THREE.Color('#a9c4e6'), attenuationDistance: 3, clearcoat: 1, clearcoatRoughness: 0.03,
-      specularIntensity: 1, envMapIntensity: 2,
+      color: '#f7fbff', roughness: 0.02, transmission: 1, thickness: 1.1, ior: 1.33, dispersion: quality.lensEffects ? 0.7 : 0,
+      attenuationColor: new THREE.Color('#dce9f8'), attenuationDistance: 9, clearcoat: 1, clearcoatRoughness: 0.02,
+      specularIntensity: 1, envMapIntensity: 1.7,
     })
     applyTriplanar(m, triMaps('rock_boulder_dry'), {
-      scale: 1.6, mix: 0.04, normal: 0.18, snow: 0.06, key: 'crystal2',
+      scale: 1.2, mix: 0, normal: 0.1, snow: 0, key: 'crystal3',
       extra: (shader) => {
         Object.assign(shader.uniforms, uniforms)
         shader.fragmentShader = shader.fragmentShader
-          .replace('#include <common>', '#include <common>\nuniform vec3 uHit;\nuniform float uHitAmt;\nuniform float uTime;')
+          .replace('#include <common>', `#include <common>
+            uniform vec3 uHit;
+            uniform float uHitAmt;
+            uniform float uTime;
+            vec2 vhash2(vec2 p) { p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+            // jittered cells: x = distance to the nearest cell border, y = distance to the nearest node
+            vec2 web(vec2 x, float t) {
+              vec2 n = floor(x), f = fract(x), mg = vec2(0.0), mr = vec2(0.0);
+              float md = 8.0;
+              for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+                vec2 g = vec2(float(i), float(j));
+                vec2 o = 0.5 + 0.45 * sin(t + 6.2831 * vhash2(n + g));
+                vec2 r = g + o - f;
+                float d = dot(r, r);
+                if (d < md) { md = d; mr = r; mg = g; }
+              }
+              float bd = 8.0;
+              for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
+                vec2 g = mg + vec2(float(i), float(j));
+                vec2 o = 0.5 + 0.45 * sin(t + 6.2831 * vhash2(n + g));
+                vec2 r = g + o - f;
+                if (dot(mr - r, mr - r) > 1e-5) bd = min(bd, dot(0.5 * (mr + r), normalize(r - mr)));
+              }
+              return vec2(bd, sqrt(md));
+            }`)
           .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
             {
               float dh = distance(vTriPos, uHit);
-              float reach = uHitAmt * (1.0 - smoothstep(0.15, 1.45, dh));
-              // ripples running out from the cursor and a slower swell rocking back and forth
-              float ripple = sin(dh * 28.0 - uTime * 9.0) * 0.5 + 0.5;
-              float swell = sin(dh * 6.0 - uTime * 2.6 + sin(uTime * 1.4) * 2.2) * 0.5 + 0.5;
-              // very fine grid that keeps crawling over the ice; the waves bend it
-              vec3 gp = vTriPos / 0.034 + vec3(uTime * 0.9, uTime * 0.55, -uTime * 0.7) + triNw * ripple * 0.35;
-              vec3 gq = abs(fract(gp - 0.5) - 0.5) / max(fwidth(gp) * 0.5, vec3(1e-4));
-              float line = (1.0 - min(min(gq.y, gq.z), 1.0)) * triWt.x
-                         + (1.0 - min(min(gq.x, gq.z), 1.0)) * triWt.y
-                         + (1.0 - min(min(gq.x, gq.y), 1.0)) * triWt.z;
-              float rings = smoothstep(0.93, 1.0, ripple) * reach;
-              totalEmissiveRadiance += vec3(0.85, 0.93, 1.0) * (line * (0.2 + 0.8 * swell) * reach * 0.5 + rings * 0.3);
-              // cold rim on the silhouette so the crystal stands out of the fog
-              float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 2.5);
-              totalEmissiveRadiance += vec3(0.7, 0.82, 1.0) * fres * 0.45;
+              float reach = uHitAmt * (1.0 - smoothstep(0.1, 1.05, dh));
+              float ripple = sin(dh * 26.0 - uTime * 8.0) * 0.5 + 0.5;
+              if (reach > 0.002) {
+                // a fine random web, like the one on the lighthouse, wandering fast over the ice
+                vec3 gp = vTriPos / 0.12 + vec3(uTime * 0.8, uTime * 0.5, -uTime * 0.6) + triNw * ripple * 0.25;
+                float t = uTime * 2.6;
+                vec2 wx = web(gp.zy, t), wy = web(gp.xz + 17.0, t), wz = web(gp.xy + 31.0, t);
+                vec2 w = wx * triWt.x + wy * triWt.y + wz * triWt.z;
+                float px = max(fwidth(gp.x) + fwidth(gp.y), 1e-4);
+                float line = 1.0 - smoothstep(0.0, px * 0.55, w.x);
+                float node = 1.0 - smoothstep(px * 0.6, px * 1.1, w.y);
+                float rings = smoothstep(0.93, 1.0, ripple);
+                totalEmissiveRadiance += vec3(0.85, 0.93, 1.0) * (line * 0.6 + node * 0.9 + rings * 0.2) * reach;
+              }
+              // icy rim so the shape reads against the fog, and a soft inner glow from the emblem
+              float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 2.4);
+              totalEmissiveRadiance += vec3(0.72, 0.84, 1.0) * fres * 0.5;
+              totalEmissiveRadiance += vec3(1.0, 0.7, 0.42) * 0.05 * (1.0 - smoothstep(0.0, 1.6, length(vTriPos - (modelMatrix * vec4(0.0, 0.25, 0.0, 1.0)).xyz)));
             }`)
       },
     })
@@ -163,13 +189,13 @@ function Crystal() {
       <group ref={group}>
         <group scale={0.95}>
           <mesh ref={ice} geometry={geo} material={mat} />
-          <mesh geometry={cracks} material={crackMat} />
+          <mesh geometry={emblem} material={emblemMat} />
           <mesh geometry={bubbles} material={bubbleMat} />
         </group>
-        <pointLight position={[0, 0.2, 0]} color="#cfe0ff" intensity={6} distance={5} />
+        <pointLight position={[0, 0.3, 0.9]} color="#ffd1a1" intensity={2} distance={3.5} />
       </group>
       {shards.map((c, i) => <mesh key={i} ref={(m) => { shardRefs.current[i] = m }} geometry={geo} material={mat} scale={c.s * 1.4} />)}
-      <Callout anchor={[-0.55, 0.9, 0.6]} elbow={[-1.5, 1.4, 0.6]} end={[-3.0, 1.4, 0.6]} align="left" title="СЦЕНА_02" sub="ЧИСТЫЙ ЛЁД" />
+      <Callout anchor={[-0.55, 0.9, 0.6]} elbow={[-1.5, 1.4, 0.6]} end={[-3.0, 1.4, 0.6]} align="left" title="РАБОТА_01" sub="APPLE FAVORITE" />
       <Callout anchor={[0.6, 0.2, 0.5]} elbow={[1.55, 0.75, 0.5]} end={[2.7, 0.75, 0.5]} align="right" title="T" live />
       <Callout anchor={[0.5, -1.25, 0.7]} elbow={[1.35, -1.6, 0.7]} end={[3.0, -1.6, 0.7]} align="right" title="WEBGL 2.0" sub="ЛИСТАЙТЕ ДАЛЬШЕ" />
       <Constellation />
