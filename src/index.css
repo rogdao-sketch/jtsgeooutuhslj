@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --fog: #9aa3b5;
+  --ink: #f4f6fa;
+  --amber: #ffa24d;
+  font-family: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+html, body { margin: 0; background: var(--fog); }
+html.lenis, html.lenis body { height: auto; }
+.scroller { height: 700vh; }
+canvas { display: block; position: fixed !important; inset: 0; }
+
+.preloader {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  background: #9aa3b5; transition: opacity .9s ease; color: var(--ink);
+}
+.preloader--gone { opacity: 0; pointer-events: none; }
+.preloader pre { margin: 0; font-size: 15px; letter-spacing: .12em; font-weight: 500; }
+
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(40,48,66,.28) 100%); }
+
+.hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; color: var(--ink);
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase; opacity: 0; transition: opacity 1.6s ease .8s; }
+.hud--on { opacity: 1; }
+.hud > div { position: absolute; display: flex; gap: 14px; }
+.hud__tl { top: 28px; left: 32px; flex-direction: column; gap: 6px; }
+.hud__tl b { font-size: 20px; letter-spacing: .3em; font-weight: 500; }
+.hud__tl span, .hud__tr span, .hud__bl span { opacity: .75; }
+.hud__tr { top: 32px; right: 32px; }
+.hud__bl { bottom: 32px; left: 32px; align-items: center; }
+.hud__bl i { display: block; width: 1px; height: 28px; background: var(--ink); opacity: .7;
+  animation: drip 2s ease-in-out infinite; transform-origin: top; }
+@keyframes cap { from { opacity: 0; filter: blur(4px) } to { opacity: 1; filter: blur(0) } }
+@keyframes drip { 0% { transform: scaleY(0) } 50% { transform: scaleY(1) } 100% { transform: scaleY(0); transform-origin: bottom } }
+.hud__bl { transition: opacity .6s ease; } .hud__bl--off { opacity: 0; }
+.hud__bar { left: 32px; right: 32px; bottom: 16px; height: 1px; background: rgba(244,246,250,.25); }
+.hud__bar span { display: block; height: 100%; background: var(--ink); transform-origin: left; transform: scaleX(0); }
+.hud__bc { flex-direction: column; align-items: center; gap: 8px; text-shadow: 0 0 12px rgba(60,70,95,.7); animation: cap .9s ease both; bottom: 34px; left: 50%; transform: translateX(-50%); font-size: 12px; white-space: nowrap; }
+@media (max-width: 640px) {
+  .hud > .hud__tr { display: none; }
+  .hud__bc { bottom: 72px; font-size: 11px; }
+  .hud__tl { left: 20px; top: 20px; }
+}
+
+.hud__bc em { font-style: normal; font-size: 10px; letter-spacing: .12em; opacity: .7; white-space: normal; text-align: center; max-width: 80vw; }
+.hud__bc { bottom: 40px; }
+.contact { position: fixed; z-index: 12; left: 50%; top: 120px; transform: translate(-50%, 12px); width: min(720px, calc(100vw - 40px));
+  display: flex; flex-direction: column; align-items: center; gap: 22px; color: var(--ink); text-transform: uppercase;
+  letter-spacing: .14em; font-size: 11px; opacity: 0; pointer-events: none; transition: opacity .9s ease, transform .9s ease; }
+.contact--on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.contact__tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 10px; }
+.contact__tags span { padding: 6px 12px; border: 1px solid rgba(244,246,250,.45); border-radius: 999px; }
+.contact__links { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.contact__links a, .contact__soon { padding: 12px 22px; border: 1px solid var(--ink); border-radius: 999px; color: var(--ink); text-decoration: none; transition: background .3s, color .3s; }
+.contact__links a:hover { background: var(--ink); color: #3a4258; }
+.contact__soon { opacity: .7; border-style: dashed; }
+@media (max-width: 640px) { .contact { top: 90px; } }
+
+.veil { position: fixed; inset: 0; z-index: 6; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(42, 49, 66, .55) 0%, #171b26 70%); }
+.net-label { display: inline-flex; align-items: center; gap: 6px; transform: translate(10px, -50%); font-size: 10px; letter-spacing: .12em;
+  color: #f4f6fa; white-space: nowrap; text-shadow: 0 0 2px rgba(20, 26, 40, .9), 0 0 8px rgba(20, 26, 40, .6); transition: opacity .2s; }
+.net-label::before { content: ''; width: 9px; height: 1px; background: currentColor; opacity: .8; }
+.net-label--ground { transform: translate(-50%, -100%); }
+.net-label--ground::before { display: none; }
+
+.hud > .hud__snd { position: absolute; display: flex; right: 32px; bottom: 28px; pointer-events: auto; cursor: pointer; align-items: center; gap: 10px;
+  background: none; border: 0; padding: 6px 0; color: var(--ink); font: inherit; letter-spacing: inherit; text-transform: inherit; opacity: .8; }
+.hud__snd:hover { opacity: 1; }
+.hud__eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
+.hud__eq i { display: block; width: 2px; height: 3px; background: currentColor; }
+.hud__snd--on .hud__eq i { animation: eq 0.9s ease-in-out infinite alternate; }
+.hud__snd--on .hud__eq i:nth-child(2) { animation-delay: -.3s; }
+.hud__snd--on .hud__eq i:nth-child(3) { animation-delay: -.6s; }
+.hud__snd--on .hud__eq i:nth-child(4) { animation-delay: -.15s; }
+@keyframes eq { from { height: 2px } to { height: 10px } }
+@media (max-width: 640px) {
+  .hud > .hud__snd { right: 20px; bottom: 24px; }
+  /* the caption needs the bottom of a phone screen; scrolling is obvious there anyway */
+  .hud > .hud__bl { display: none; }
+}
