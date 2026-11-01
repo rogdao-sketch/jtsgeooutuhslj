@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { randomLabel } from '../lib/hover'
 import { sound } from '../lib/sound'
+import { darknessAt, progress } from '../lib/journey'
 
 const MAX = 8
 // polyline through the nodes plus a few diagonals, like a measurement overlay
@@ -40,7 +41,8 @@ export function HoverNet({ points, amount, version }: Props) {
   const root = useRef<THREE.Group>(null)
 
   useFrame(() => {
-    const a = amount()
+    // the labels are DOM and would sit on top of the transition fog: hide them while it is up
+    const a = amount() * (1 - Math.min(1, darknessAt(progress.v) * 3))
     const n = a > 0.01 ? points(pts) : 0
     count.current = n
     // points come in world space; this overlay may sit inside a moved group

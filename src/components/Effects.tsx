@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { Uniform } from 'three'
 import {
   BlendFunction, BloomEffect, Effect, ChromaticAberrationEffect, DepthOfFieldEffect, EffectComposer, EffectPass,
   NoiseEffect, RenderPass, ToneMappingEffect, ToneMappingMode, VignetteEffect,
@@ -24,9 +25,29 @@ export function Effects() {
       }`)))
     const dof = new DepthOfFieldEffect(camera, { worldFocusRange: 9, bokehScale: 2.2, resolutionScale: 0.5 })
     dof.target = focus
-    c.userData = { dof }
     const bloom = new BloomEffect({ intensity: 1.25, luminanceThreshold: 0.82, luminanceSmoothing: 0.2, mipmapBlur: true, radius: 0.72 })
     const tone = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC })
+    // transition veil: fog with a ragged, drifting edge closes in from the borders and opens again
+    const veil = new Effect('Veil', `
+      uniform float uAmount;
+      uniform float uTime;
+      uniform vec3 uColor;
+      float vh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(vh(i), vh(i + vec2(1, 0)), u.x), mix(vh(i + vec2(0, 1)), vh(i + vec2(1, 1)), u.x), u.y); }
+      float vf(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * vn(p); p = p * 2.03 + 7.7; a *= 0.5; } return v; }
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        if (uAmount < 0.001) { outputColor = inputColor; return; }
+        vec2 q = (uv - 0.5) * vec2(aspect, 1.0);
+        float n = vf(q * 2.6 + vec2(uTime * 0.04, -uTime * 0.07));
+        float field = n * 0.65 + length(q) * 0.55;
+        float t = 1.05 - uAmount * 1.55;
+        float m = smoothstep(t - 0.18, t + 0.18, field);
+        float rim = m * (1.0 - m) * 4.0;
+        vec3 cloud = uColor * (0.9 + 0.22 * vf(q * 5.0 - uTime * 0.03));
+        vec3 col = mix(inputColor.rgb, cloud, m) + rim * 0.06;
+        outputColor = vec4(col, inputColor.a);
+      }`, { uniforms: new Map<string, Uniform>([['uAmount', new Uniform(0)], ['uTime', new Uniform(0)], ['uColor', new Uniform(new THREE.Color('#9aa3b5'))]]) })
     const vignette = new VignetteEffect({ offset: 0.32, darkness: 0.5 })
     const noise = new NoiseEffect({ blendFunction: BlendFunction.OVERLAY })
     noise.blendMode.opacity.value = 0.07
@@ -34,7 +55,8 @@ export function Effects() {
     // one convolution effect per pass
     if (quality.lensEffects) c.addPass(new EffectPass(camera, dof))
     c.addPass(new EffectPass(camera, bloom))
-    c.addPass(new EffectPass(camera, tone, vignette, noise))
+    c.addPass(new EffectPass(camera, tone, veil, vignette, noise))
+    c.userData = { dof, veil }
     if (quality.lensEffects) c.addPass(new EffectPass(camera, fringe))
     return c
   }, [gl, scene, camera])
@@ -43,8 +65,13 @@ export function Effects() {
   useEffect(() => () => composer.dispose(), [composer])
   useFrame((_, dt) => {
     // transitions blur out of focus and back
-    const { dof } = composer.userData as { dof: { bokehScale: number } }
-    dof.bokehScale = 2.2 + darknessAt(progress.v) * 9
+    const { dof, veil } = composer.userData as { dof: { bokehScale: number }; veil: { uniforms: Map<string, Uniform> } }
+    const dive = darknessAt(progress.v)
+    dof.bokehScale = 2.2 + dive * 7
+    veil.uniforms.get('uAmount')!.value = dive
+    veil.uniforms.get('uTime')!.value += dt
+    const fog = scene.fog as THREE.Fog | null
+    if (fog) (veil.uniforms.get('uColor')!.value as THREE.Color).copy(fog.color)
     composer.render(dt)
   }, 1)
   return null

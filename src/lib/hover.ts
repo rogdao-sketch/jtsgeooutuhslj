@@ -25,10 +25,10 @@ export interface HoverInfo {
  * Hover by casting the cursor ray against an (invisible) proxy mesh every frame.
  * Pointer events on meshes are unreliable here (fixed canvas under a scrolling page), the pointer itself is not.
  */
-export function useRayHover(proxy: React.RefObject<THREE.Object3D | null>, ease = 0.07) {
+export function useRayHover(proxy: React.RefObject<THREE.Object3D | null>, rate = 3) {
   const s = useRef<HoverInfo>({ target: 0, amt: 0, point: new THREE.Vector3(), version: 0 })
   const hits = useRef<THREE.Intersection[]>([])
-  useFrame(({ camera, pointer }) => {
+  useFrame(({ camera, pointer }, dt) => {
     const h = s.current
     const obj = proxy.current
     let over = false
@@ -46,7 +46,8 @@ export function useRayHover(proxy: React.RefObject<THREE.Object3D | null>, ease 
     h.target = over ? 1 : 0
     if (over) { hoverState.owner = s.current; hoverState.object = true }
     else if (hoverState.owner === s.current) { hoverState.owner = null; hoverState.object = false }
-    h.amt += (h.target - h.amt) * ease
+    // eased in time, not per frame: same feel at 60 and 144 fps
+    h.amt += (h.target - h.amt) * (1 - Math.exp(-Math.min(dt, 0.1) * rate))
   })
   return s
 }

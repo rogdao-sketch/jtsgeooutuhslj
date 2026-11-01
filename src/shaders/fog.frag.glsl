@@ -41,12 +41,9 @@ void main() {
   vec3 col = mix(deep, mid, smoothstep(0.25, 0.65, f));
   col = mix(col, high, smoothstep(0.5, 0.85, f * 0.6 + f2 * 0.55));
 
-  // horizon haze and a warm halo around the lamp
+  // horizon haze
   col = mix(col, high, smoothstep(0.1, -0.5, p0.y) * 0.55);
   col = mix(col, col * vec3(0.9, 0.93, 1.0), smoothstep(0.1, 0.7, uScroll) * 0.35);
-  vec2 lamp = vec2(0.0, 0.17) + push * 0.12;
-  float halo = exp(-length(p0 - lamp) * 3.4) * (1.0 - smoothstep(0.0, 0.2, uScroll) * 0.85);
-  col += vec3(1.0, 0.62, 0.28) * halo * (0.20 + 0.07 * uPulse);
 
   col *= 1.0 - smoothstep(0.55, 1.15, length(p0 * vec2(0.9, 1.15))) * 0.38;
   float g = hash(uv * uRes + fract(uTime)) - 0.5;

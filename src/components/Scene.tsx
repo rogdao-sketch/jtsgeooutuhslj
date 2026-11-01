@@ -162,9 +162,9 @@ function Rig({ intro }: { intro: Ref }) {
     // dive: lens stretches and the horizon tilts a little, then everything settles
     const dive = darknessAt(progress.v)
     const cam = camera as THREE.PerspectiveCamera
-    const fov = 34 + dive * 16
+    const fov = 34 + dive * 9
     if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix() }
-    camera.rotateZ(Math.sin(progress.v * 23) * dive * 0.09)
+    camera.rotateZ(Math.sin(progress.v * 23) * dive * 0.04)
     sound.update(performance.now() / 1000, dive)
   })
   return null

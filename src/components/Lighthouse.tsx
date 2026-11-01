@@ -55,11 +55,12 @@ function tagStones(g: THREE.BufferGeometry) {
   return stones
 }
 
-const HOVER_R = 1.6
+const HOVER_R = 1.9
 
 /** Mirrors the vertex shader so the net can sit exactly on the moved stones. */
 function pushStone(c: THREE.Vector3, r: number, hit: THREE.Vector3, amt: number, out: THREE.Vector3) {
-  const hd = amt * (1 - THREE.MathUtils.smoothstep(c.distanceTo(hit), 0, HOVER_R))
+  let hd = amt * (1 - THREE.MathUtils.smoothstep(c.distanceTo(hit), 0, HOVER_R))
+  hd = hd * hd * (3 - 2 * hd)
   const len = Math.max(Math.hypot(c.x, c.z), 1e-4)
   const rx = c.x / len, rz = c.z / len
   const side = r * 2 - 1
@@ -73,7 +74,8 @@ export function Lighthouse() {
   const hoverU = useMemo(() => ({ uHover: { value: new THREE.Vector3(0, -50, 0) }, uHoverAmt: { value: 0 }, uHoverR: { value: HOVER_R } }), [])
   const state = useRef({ version: 0, picked: [] as number[], pickedAt: new THREE.Vector3(0, -50, 0) })
   const proxy = useRef<THREE.Mesh>(null)
-  const hov = useRayHover(proxy)
+  const hov = useRayHover(proxy, 1.4)
+  const flash = useRef(0)
 
   const { tower, stones, core } = useMemo(() => {
     let tower: THREE.Mesh | null = null
@@ -108,6 +110,7 @@ export function Lighthouse() {
                 varying float vHover;`)
               .replace('#include <begin_vertex>', `#include <begin_vertex>
                 float hd = uHoverAmt * (1.0 - smoothstep(0.0, uHoverR, distance(aCenter, uHover)));
+                hd = hd * hd * (3.0 - 2.0 * hd);
                 vec2 rad = aCenter.xz / max(length(aCenter.xz), 1e-4);
                 vec2 tg = vec2(-rad.y, rad.x);
                 float side = aRand * 2.0 - 1.0;
@@ -137,13 +140,14 @@ export function Lighthouse() {
   const light = useRef<THREE.PointLight>(null)
   const local = useMemo(() => new THREE.Vector3(), [])
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     const s = state.current
     const h = hov.current
+    flash.current = Math.min(1, flash.current + dt * 1.6)
     if (h.target && tower) {
       local.copy(h.point)
       tower.worldToLocal(local)
-      hoverU.uHover.value.lerp(local, h.amt < 0.05 ? 1 : 0.3)
+      hoverU.uHover.value.lerp(local, h.amt < 0.02 ? 1 : 1 - Math.exp(-dt * 3))
     }
     hoverU.uHoverAmt.value = h.amt
     const a = h.amt
@@ -154,12 +158,13 @@ export function Lighthouse() {
       tower.localToWorld(light.current.position)
     }
     // pick the stones nearest to the cursor again once it has moved far enough
-    if (h.target && hoverU.uHover.value.distanceTo(s.pickedAt) > 0.7) {
+    if (h.target && hoverU.uHover.value.distanceTo(s.pickedAt) > 0.9) {
       s.pickedAt.copy(hoverU.uHover.value)
       s.picked = stones.map((st, i) => [st.c.distanceToSquared(s.pickedAt), i]).sort((x, y) => x[0] - y[0]).slice(0, 7).map((x) => x[1])
         // order around the cursor so the polyline does not cross itself
         .sort((x, y) => Math.atan2(stones[x].c.y - s.pickedAt.y, stones[x].c.x - s.pickedAt.x) - Math.atan2(stones[y].c.y - s.pickedAt.y, stones[y].c.x - s.pickedAt.x))
       s.version++
+      flash.current = 0
     }
   })
 
@@ -186,7 +191,7 @@ export function Lighthouse() {
         <meshBasicMaterial />
       </mesh>
       <pointLight ref={light} color="#ffb47a" intensity={0} distance={3.5} decay={2} />
-      <HoverNet points={netPoints} amount={() => hoverU.uHoverAmt.value} version={() => state.current.version} />
+      <HoverNet points={netPoints} amount={() => { const f = flash.current; return hoverU.uHoverAmt.value * f * f * (3 - 2 * f) }} version={() => state.current.version} />
     </group>
   )
 }
