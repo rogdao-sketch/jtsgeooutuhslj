@@ -23,17 +23,17 @@ export function WindPixels({ count = 2600 }: { count?: number }) {
     g.setAttribute('seed', new THREE.BufferAttribute(s, 1))
     const m = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false,
-      uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uPx: { value: Math.min(window.devicePixelRatio, 2) }, uRush: { value: 0 }, uRushT: { value: 0 } },
+      uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uPx: { value: Math.min(window.devicePixelRatio, 2) }, uRush: { value: 0 }, uRushT: { value: 0 }, uFwd: { value: new THREE.Vector3(0, 0, -1) } },
       vertexShader: /* glsl */ `
         attribute float seed;
-        uniform float uTime; uniform vec3 uCam; uniform float uPx; uniform float uRush; uniform float uRushT;
+        uniform float uTime; uniform vec3 uCam; uniform float uPx; uniform float uRush; uniform float uRushT; uniform vec3 uFwd;
         varying float vA; varying float vWarm;
         void main() {
           float gust = 1.0 + 0.8 * sin(uTime * 0.35 + seed * 2.0) * sin(uTime * 0.13);
           vec3 wind = vec3(1.6, -0.35, 0.5) * uTime * (0.6 + seed * 0.8) * gust;
           vec3 q = position + wind;
-          // during a dive the flakes stream upward past the camera
-          q.y += uRushT * (8.0 + seed * 10.0);
+          // during a flight the flakes rush toward the camera
+          q -= uFwd * uRushT * (14.0 + seed * 14.0);
           q.y += sin(uTime * 1.3 + seed * 40.0) * 0.25;
           q.x += sin(uTime * 0.9 + seed * 25.0) * 0.35;
           // wrap into a box centred on the camera
@@ -60,6 +60,7 @@ export function WindPixels({ count = 2600 }: { count?: number }) {
   useFrame(({ clock, camera }, dt) => {
     mat.uniforms.uTime.value = clock.elapsedTime
     mat.uniforms.uCam.value.copy(camera.position)
+    camera.getWorldDirection(mat.uniforms.uFwd.value)
     const rush = darknessAt(progress.v)
     mat.uniforms.uRush.value = rush
     mat.uniforms.uRushT.value += rush * dt
@@ -92,9 +93,9 @@ const mistVert = /* glsl */ `
  * Surroundings for the scenes in the depths: a drifting floor of mist below the object
  * and huge faint rings far behind it, so the void reads as a place.
  */
-export function Depths({ floor, seed, tilt = false }: { floor: number; seed: number; tilt?: boolean }) {
+export function Depths({ floor, seed, tilt = false, ceiling = false }: { floor: number; seed: number; tilt?: boolean; ceiling?: boolean }) {
   const mats = useMemo(() => [0, 1].map((i) => new THREE.ShaderMaterial({
-    vertexShader: mistVert, fragmentShader: mistFrag, transparent: true, depthWrite: false,
+    vertexShader: mistVert, fragmentShader: mistFrag, transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: { uTime: { value: 0 }, uSeed: { value: seed + i * 0.37 } },
   })), [seed])
   const rings = useMemo(() => new THREE.MeshBasicMaterial({ color: new THREE.Color(1.15, 1.18, 1.25), transparent: true, opacity: 0.18, depthWrite: false, toneMapped: false }), [])
@@ -106,11 +107,11 @@ export function Depths({ floor, seed, tilt = false }: { floor: number; seed: num
   return (
     <group>
       {mats.map((m, i) => (
-        <mesh key={i} material={m} rotation={[-Math.PI / 2, 0, 0]} position={[0, floor - i * 0.9, 0]}>
+        <mesh key={i} material={m} rotation={[-Math.PI / 2, 0, 0]} position={[0, floor + (ceiling ? i : -i) * 0.9, 0]}>
           <planeGeometry args={[70, 70]} />
         </mesh>
       ))}
-      <group ref={(g) => { ringGroup.current = g }} position={[0, 1, -26]} rotation={[tilt ? 0.5 : 0.15, 0, 0]}>
+      <group ref={(g) => { ringGroup.current = g }} position={[0, 1, -26]} rotation={[tilt ? 0.5 : 0.15, 0, 0]} visible={!ceiling}>
         {[13, 18.5, 25].map((r, i) => (
           <mesh key={r} material={rings} rotation={[0, 0, i * 0.7]}>
             <torusGeometry args={[r, 0.07 + i * 0.03, 8, 160, Math.PI * (1.4 + i * 0.2)]} />

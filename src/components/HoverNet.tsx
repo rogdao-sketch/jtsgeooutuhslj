@@ -3,81 +3,127 @@ import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { randomLabel } from '../lib/hover'
-import { sound } from '../lib/sound'
 import { darknessAt, progress } from '../lib/journey'
 
-const MAX = 8
-// polyline through the nodes plus a few diagonals, like a measurement overlay
-const LINKS = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 0, 3, 2, 5, 1, 6]
+export interface NetNode { id: number; p: THREE.Vector3 }
+
+const SLOTS = 12
+const WANT = 8
+
+interface Slot { id: number; w: number; target: number; p: THREE.Vector3; local: THREE.Vector3 }
 
 interface Props {
-  /** fills `out` with up to MAX world-space points and returns how many were written */
-  points: (out: THREE.Vector3[]) => number
+  /** fills `out` with the nodes the net should hold right now (world space, nearest first); returns how many */
+  nodes: (out: NetNode[]) => number
   /** 0..1 visibility, read every frame */
   amount: () => number
-  /** changes whenever the set of nodes changes, so the numbers are rolled again */
-  version: () => number
 }
 
-/** Thin lines between hovered points, cross markers and small random numbers next to them. */
-export function HoverNet({ points, amount, version }: Props) {
-  const pts = useMemo(() => Array.from({ length: MAX }, () => new THREE.Vector3()), [])
+/**
+ * A web over hovered pieces: every node is pinned to one piece (one brick, one block).
+ * Pieces that come into reach fade in, those left behind fade out, and every node is
+ * threaded to its two nearest neighbours, so the web re-knots itself as the cursor moves.
+ */
+export function HoverNet({ nodes, amount }: Props) {
+  const buf = useMemo(() => Array.from({ length: WANT }, () => ({ id: -1, p: new THREE.Vector3() })), [])
+  const slots = useMemo<Slot[]>(() => Array.from({ length: SLOTS }, () => ({ id: -1, w: 0, target: 0, p: new THREE.Vector3(), local: new THREE.Vector3() })), [])
+  const MAXSEG = SLOTS * 2
   const lineGeo = useMemo(() => {
     const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LINKS.length * 3), 3))
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAXSEG * 2 * 3), 3))
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAXSEG * 2 * 3), 3))
     return g
-  }, [])
-  const lineMat = useMemo(() => new THREE.LineBasicMaterial({ color: new THREE.Color(1.6, 1.7, 1.8), transparent: true, depthTest: false, toneMapped: false }), [])
+  }, [MAXSEG])
+  const lineMat = useMemo(() => new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, toneMapped: false }), [])
   const dotGeo = useMemo(() => {
     const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3))
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SLOTS * 3), 3))
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(SLOTS * 3), 3))
     return g
   }, [])
-  const dotMat = useMemo(() => new THREE.PointsMaterial({ color: new THREE.Color(1.8, 1.8, 1.8), size: 5, sizeAttenuation: false, transparent: true, depthTest: false, toneMapped: false }), [])
+  const dotMat = useMemo(() => new THREE.PointsMaterial({ vertexColors: true, size: 5, sizeAttenuation: false, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, toneMapped: false }), [])
   const anchors = useRef<(THREE.Group | null)[]>([])
   const labels = useRef<(HTMLSpanElement | null)[]>([])
-  const seen = useRef(-1)
-  const count = useRef(0)
   const root = useRef<THREE.Group>(null)
+  const seen = useMemo(() => new Set<number>(), [])
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     // the labels are DOM and would sit on top of the transition fog: hide them while it is up
     const a = amount() * (1 - Math.min(1, darknessAt(progress.v) * 3))
-    const n = a > 0.01 ? points(pts) : 0
-    count.current = n
-    // points come in world space; this overlay may sit inside a moved group
-    if (root.current) for (let i = 0; i < n; i++) root.current.worldToLocal(pts[i])
-    if (version() !== seen.current) {
-      if (seen.current !== -1 && a > 0.02) sound.ping()
-      seen.current = version()
-      labels.current.forEach((l) => { if (l) l.textContent = String(randomLabel()) })
+    const n = a > 0.005 ? nodes(buf) : 0
+    for (const s of slots) s.target = 0
+    seen.clear()
+    for (let k = 0; k < n; k++) {
+      const { id, p } = buf[k]
+      seen.add(id)
+      let s = slots.find((x) => x.id === id)
+      if (!s) {
+        // take a free slot, or the faintest fading one
+        s = slots.filter((x) => !seen.has(x.id) && x.target === 0).sort((x, y) => x.w - y.w)[0]
+        if (!s) continue
+        s.id = id
+        s.w = 0
+        const l = labels.current[slots.indexOf(s)]
+        if (l) l.textContent = String(randomLabel())
+      }
+      s.target = 1
+      s.p.copy(p)
     }
+    const fade = 1 - Math.exp(-Math.min(dt, 0.1) * 5)
+    for (const s of slots) {
+      s.w += (s.target - s.w) * fade
+      if (s.w < 0.002 && s.target === 0) s.id = -1
+      s.local.copy(s.p)
+      root.current?.worldToLocal(s.local)
+    }
+
+    // thread every live node to its two nearest live neighbours
     const lp = lineGeo.attributes.position as THREE.BufferAttribute
-    let k = 0
-    for (let i = 0; i < LINKS.length; i += 2) {
-      const p = LINKS[i], q = LINKS[i + 1]
-      if (p < n && q < n) { lp.setXYZ(k++, pts[p].x, pts[p].y, pts[p].z); lp.setXYZ(k++, pts[q].x, pts[q].y, pts[q].z) }
+    const lc = lineGeo.attributes.color as THREE.BufferAttribute
+    let seg = 0
+    const live = slots.map((s, i) => [s, i] as const).filter(([s]) => s.id >= 0 && s.w > 0.01)
+    const done = new Set<number>()
+    for (const [s, i] of live) {
+      const near = live.filter(([, j]) => j !== i).map(([o, j]) => [o.local.distanceToSquared(s.local), o, j] as const).sort((x, y) => x[0] - y[0]).slice(0, 2)
+      for (const [, o, j] of near) {
+        const key = Math.min(i, j) * 64 + Math.max(i, j)
+        if (done.has(key) || seg >= MAXSEG) continue
+        done.add(key)
+        const w = Math.min(s.w, o.w) * a * 1.5
+        lp.setXYZ(seg * 2, s.local.x, s.local.y, s.local.z)
+        lp.setXYZ(seg * 2 + 1, o.local.x, o.local.y, o.local.z)
+        lc.setXYZ(seg * 2, w, w * 1.05, w * 1.12)
+        lc.setXYZ(seg * 2 + 1, w, w * 1.05, w * 1.12)
+        seg++
+      }
     }
     lp.needsUpdate = true
-    lineGeo.setDrawRange(0, k)
+    lc.needsUpdate = true
+    lineGeo.setDrawRange(0, seg * 2)
+
     const dp = dotGeo.attributes.position as THREE.BufferAttribute
-    for (let i = 0; i < n; i++) dp.setXYZ(i, pts[i].x, pts[i].y, pts[i].z)
+    const dc = dotGeo.attributes.color as THREE.BufferAttribute
+    slots.forEach((s, i) => {
+      const w = s.id >= 0 ? s.w * a * 1.8 : 0
+      dp.setXYZ(i, s.local.x, s.local.y, s.local.z)
+      dc.setXYZ(i, w, w, w)
+      const g = anchors.current[i]
+      if (g) { g.visible = w > 0.01; g.position.copy(s.local) }
+      const l = labels.current[i]
+      if (l) l.style.opacity = String(s.id >= 0 ? s.w * a : 0)
+    })
     dp.needsUpdate = true
-    dotGeo.setDrawRange(0, n)
-    lineMat.opacity = a * 0.85
-    dotMat.opacity = a
-    anchors.current.forEach((g, i) => { if (g) { g.visible = i < n; g.position.copy(pts[i]) } })
-    labels.current.forEach((l, i) => { if (l) l.style.opacity = String(i < n ? a : 0) })
+    dc.needsUpdate = true
   })
 
   return (
     <group ref={root}>
       <lineSegments geometry={lineGeo} material={lineMat} renderOrder={20} frustumCulled={false} />
       <points geometry={dotGeo} material={dotMat} renderOrder={21} frustumCulled={false} />
-      {pts.map((_, i) => (
+      {slots.map((_, i) => (
         <group key={i} ref={(g) => { anchors.current[i] = g }}>
           <Html zIndexRange={[8, 0]} style={{ pointerEvents: 'none' }}>
-            <span className="net-label" ref={(l) => { labels.current[i] = l }}>{randomLabel()}</span>
+            <span className="net-label" ref={(l) => { labels.current[i] = l }} style={{ opacity: 0 }}>{randomLabel()}</span>
           </Html>
         </group>
       ))}

@@ -135,8 +135,14 @@ function Surface({ children }: { children: React.ReactNode }) {
 
 /** Hands loader progress to the preloader, which lives outside this chunk. */
 function LoadReporter() {
-  const { progress, active } = useProgress()
-  useEffect(() => { load.progress = active ? Math.min(progress, 99) : 100 }, [progress, active])
+  // polled instead of subscribed: a subscription re-renders this component while loaders render, which React warns about
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { progress, active } = useProgress.getState()
+      load.progress = active ? Math.min(progress, 99) : 100
+    }, 100)
+    return () => clearInterval(id)
+  }, [])
   return null
 }
 

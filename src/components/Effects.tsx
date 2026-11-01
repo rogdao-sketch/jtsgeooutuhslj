@@ -39,13 +39,17 @@ export function Effects() {
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         if (uAmount < 0.001) { outputColor = inputColor; return; }
         vec2 q = (uv - 0.5) * vec2(aspect, 1.0);
-        float n = vf(q * 2.6 + vec2(uTime * 0.04, -uTime * 0.07));
-        float field = n * 0.65 + length(q) * 0.55;
-        float t = 1.05 - uAmount * 1.55;
-        float m = smoothstep(t - 0.18, t + 0.18, field);
+        float r = length(q);
+        float ang = atan(q.y, q.x);
+        // polar noise streaming outward: wisps of cloud fly past the lens
+        float flow = log(r + 0.05) * 2.2 - uTime * 1.6;
+        float n = vf(vec2(ang * 2.5, flow)) * 0.6 + vf(q * 3.0 + uTime * 0.05) * 0.4;
+        float field = n * 0.7 + r * 0.45;
+        float t = 1.05 - uAmount * 1.6;
+        float m = smoothstep(t - 0.22, t + 0.22, field);
         float rim = m * (1.0 - m) * 4.0;
-        vec3 cloud = uColor * (0.9 + 0.22 * vf(q * 5.0 - uTime * 0.03));
-        vec3 col = mix(inputColor.rgb, cloud, m) + rim * 0.06;
+        vec3 cloud = uColor * (0.88 + 0.26 * vf(vec2(ang * 4.0, flow * 1.7)));
+        vec3 col = mix(inputColor.rgb, cloud, m) + rim * 0.05;
         outputColor = vec4(col, inputColor.a);
       }`, { uniforms: new Map<string, Uniform>([['uAmount', new Uniform(0)], ['uTime', new Uniform(0)], ['uColor', new Uniform(new THREE.Color('#9aa3b5'))]]) })
     const vignette = new VignetteEffect({ offset: 0.32, darkness: 0.5 })
@@ -67,7 +71,8 @@ export function Effects() {
     // transitions blur out of focus and back
     const { dof, veil } = composer.userData as { dof: { bokehScale: number }; veil: { uniforms: Map<string, Uniform> } }
     const dive = darknessAt(progress.v)
-    dof.bokehScale = 2.2 + dive * 7
+    // no lens blur at the works: the screens must stay readable
+    dof.bokehScale = (2.2 + dive * 7) * (1 - THREE.MathUtils.smoothstep(progress.v, 0.66, 0.74))
     veil.uniforms.get('uAmount')!.value = dive
     veil.uniforms.get('uTime')!.value += dt
     const fog = scene.fog as THREE.Fog | null

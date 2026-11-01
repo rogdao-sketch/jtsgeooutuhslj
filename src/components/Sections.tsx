@@ -1,6 +1,6 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { useTexture } from '@react-three/drei'
+import { Html, useTexture } from '@react-three/drei'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -8,7 +8,7 @@ import { ImprovedNoise } from 'three/examples/jsm/math/ImprovedNoise.js'
 import { CHAPTERS, SECTION_Y, progress } from '../lib/journey'
 import { useRayHover } from '../lib/hover'
 import { applyTriplanar, triMaps } from '../lib/triplanar'
-import { HoverNet } from './HoverNet'
+import { HoverNet, type NetNode } from './HoverNet'
 import { Depths } from './Atmosphere'
 
 const BASE = import.meta.env.BASE_URL
@@ -184,12 +184,12 @@ function Portal() {
     if (core.current) core.current.scale.setScalar(0.05 + flash * 1.4)
     if (light.current) light.current.intensity = 4 + flash * 60
   })
-  const net = (out: THREE.Vector3[]) => {
+  const net = (out: NetNode[]) => {
     if (!group.current || !mesh.current) return 0
     const m = new THREE.Matrix4(), p = new THREE.Vector3()
-    const near = blocks.map((_, i) => { mesh.current!.getMatrixAt(i, m); p.setFromMatrixPosition(m); return [p.distanceToSquared(local), p.clone()] as const })
+    const near = blocks.map((_, i) => { mesh.current!.getMatrixAt(i, m); p.setFromMatrixPosition(m); return [p.distanceToSquared(local), p.clone(), i] as const })
       .sort((x, y) => x[0] - y[0]).slice(0, 6)
-    near.forEach(([, q], k) => { out[k].copy(q); out[k].z += 0.5; group.current!.localToWorld(out[k]) })
+    near.forEach(([, q, i], k) => { out[k].p.copy(q); out[k].p.z += 0.5; group.current!.localToWorld(out[k].p); out[k].id = i })
     return near.length
   }
   return (
@@ -209,7 +209,7 @@ function Portal() {
         <ringGeometry args={[3.2, 5.6, 48]} />
         <meshBasicMaterial side={THREE.DoubleSide} />
       </mesh>
-      <HoverNet points={net} amount={() => hov.current.amt} version={() => hov.current.version} />
+      <HoverNet nodes={net} amount={() => hov.current.amt} />
     </group>
   )
 }
@@ -245,52 +245,87 @@ function uiTexture(variant: number) {
   return t
 }
 
+const PICS = ['apple-favorite-tg', 'gerbariy-thumb', 'pole-thumb', 'maison-petale-thumb', 'zerno-thumb', 'bubble-tea-thumb', 'apple-favorite-thumb']
+
+/**
+ * An endless thread: cards crawl up the spiral forever and melt into cloud at both ends
+ * (top into light mist, bottom into shade), so it never visibly starts or stops.
+ */
 function Thread() {
-  const N = 22
+  const N = 34
+  const SPAN = N * 0.36
   const group = useRef<THREE.Group>(null)
+  const pics = useTexture(PICS.map((p) => `${BASE}works/${p}.webp`))
+  pics.forEach((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4 })
   const geo = useMemo(() => new RoundedBoxGeometry(1.7, 1.06, 0.07, 2, 0.1), [])
-  const glass = useMemo(() => new THREE.MeshPhysicalMaterial({
-    color: '#dfe7f2', transmission: 0.6, roughness: 0.32, thickness: 0.4, ior: 1.4, clearcoat: 1, clearcoatRoughness: 0.2, envMapIntensity: 1.2,
-  }), [])
-  const screens = useMemo(() => [0, 1, 2].map((v) => new THREE.MeshBasicMaterial({
-    map: uiTexture(v), transparent: true, depthWrite: false, toneMapped: false, color: new THREE.Color(1.25, 1.32, 1.5), opacity: 0.85,
-  })), [])
-  const tiles = useMemo(() => Array.from({ length: N }, (_, i) => ({ a: i * 0.55, y: (i - N / 2) * 0.36, v: (i * 7) % 3, push: 0 })), [])
+  const ui = useMemo(() => [0, 1, 2].map((v) => uiTexture(v)), [])
+  const tiles = useMemo(() => Array.from({ length: N }, (_, i) => {
+    const pic = i % 3 !== 2
+    return {
+      push: 0,
+      glass: new THREE.MeshPhysicalMaterial({
+        color: '#dfe7f2', transmission: 0.6, roughness: 0.32, thickness: 0.4, ior: 1.4, clearcoat: 1, clearcoatRoughness: 0.2,
+        envMapIntensity: 1.2, transparent: true,
+      }),
+      screen: new THREE.MeshBasicMaterial({
+        map: pic ? pics[i % pics.length] : ui[i % 3], transparent: true, depthWrite: false, toneMapped: false,
+        color: pic ? new THREE.Color(1, 1, 1) : new THREE.Color(1.25, 1.32, 1.5),
+      }),
+      pic,
+    }
+  }), [pics, ui])
   const refs = useRef<(THREE.Group | null)[]>([])
   const dots = useRef<(THREE.Mesh | null)[]>([])
   const proxy = useRef<THREE.Mesh>(null)
   const hov = useRayHover(proxy, 2.5)
   const w = useMemo(() => new THREE.Vector3(), [])
+  const shade = useMemo(() => new THREE.Color(), [])
   useFrame(({ clock }, dt) => {
     const t = clock.elapsedTime
-    if (group.current) group.current.rotation.y += dt * 0.1
+    if (group.current) group.current.rotation.y += dt * 0.08
+    const crawl = t * 0.22 // cards per second travelling upward
     tiles.forEach((tl, i) => {
       const g = refs.current[i]
       if (!g) return
+      const sIdx = (((i + crawl) % N) + N) % N
+      const y = (sIdx - N / 2) * 0.36
+      const a = sIdx * 0.55
       g.getWorldPosition(w)
       const target = hov.current.amt * (1 - smooth(w.distanceTo(hov.current.point), 0, 1.8))
       tl.push += (target - tl.push) * (1 - Math.exp(-dt * 5))
       const r = 2.7 + tl.push * 0.7
-      g.position.set(Math.cos(tl.a) * r, tl.y + Math.sin(t * 0.6 + i) * 0.04, Math.sin(tl.a) * r)
+      g.position.set(Math.cos(a) * r, y, Math.sin(a) * r)
+      g.rotation.set(0, -a + Math.PI / 2, 0)
+      // fade into the clouds at both ends; the lower end also sinks into shade
+      const up = smooth(y, SPAN * 0.18, SPAN * 0.42)
+      const down = smooth(-y, SPAN * 0.16, SPAN * 0.42)
+      const vis = 1 - Math.max(up, down)
+      tl.glass.opacity = vis
+      tl.screen.opacity = vis * (tl.pic ? 0.95 : 0.85)
+      shade.setScalar(1 - down * 0.6)
+      tl.glass.color.set('#dfe7f2').multiply(shade)
+      g.visible = vis > 0.01
     })
     // messages travelling up the thread
     dots.current.forEach((m, k) => {
       if (!m) return
-      const u = (t * 0.04 + k / 10) % 1
-      const a = u * N * 0.55, y = (u * N - N / 2) * 0.36
-      m.position.set(Math.cos(a) * 2.2, y, Math.sin(a) * 2.2)
+      const u = (t * 0.035 + k / 12) % 1
+      const sIdx = u * N
+      const y = (sIdx - N / 2) * 0.36
+      m.position.set(Math.cos(sIdx * 0.55) * 2.2, y, Math.sin(sIdx * 0.55) * 2.2)
+      m.visible = Math.abs(y) < SPAN * 0.36
     })
   })
   return (
     <group>
       <group ref={group}>
         {tiles.map((tl, i) => (
-          <group key={i} ref={(g) => { refs.current[i] = g }} rotation={[0, -tl.a + Math.PI / 2, 0]}>
-            <mesh geometry={geo} material={glass} />
-            <mesh position={[0, 0, 0.045]} material={screens[tl.v]}><planeGeometry args={[1.5, 0.94]} /></mesh>
+          <group key={i} ref={(g) => { refs.current[i] = g }}>
+            <mesh geometry={geo} material={tl.glass} />
+            <mesh position={[0, 0, 0.045]} material={tl.screen}><planeGeometry args={[1.5, 0.94]} /></mesh>
           </group>
         ))}
-        {Array.from({ length: 10 }, (_, k) => (
+        {Array.from({ length: 12 }, (_, k) => (
           <mesh key={k} ref={(m) => { dots.current[k] = m }}>
             <sphereGeometry args={[0.05, 12, 8]} />
             <meshBasicMaterial color={[2.6, 1.6, 0.8]} toneMapped={false} />
@@ -307,20 +342,30 @@ function Thread() {
 }
 
 // ---------- 05/06: works as screens set into stone monoliths standing in a turning circle ----------
-const WORKS = ['apple-favorite', 'gerbariy', 'pole', 'maison-petale', 'zerno', 'bubble-tea']
+const WORKS = [
+  { slug: 'apple-favorite', name: 'Apple Favorite', kind: 'Интернет-магазин техники' },
+  { slug: 'gerbariy', name: 'Гербарий №7', kind: 'Цветочная мастерская' },
+  { slug: 'pole', name: 'ПОЛЕ', kind: 'Цветочная лавка' },
+  { slug: 'maison-petale', name: 'Maison Pétale', kind: 'Цветочный дом' },
+  { slug: 'zerno', name: 'ЗЕРНО', kind: 'Кофейня' },
+  { slug: 'bubble-tea', name: 'Bubble Tea Love', kind: 'Бар бабл-ти' },
+]
 const RING_R = 6.5
 
-function Monolith({ slug, a, geo, stone }: { slug: string; a: number; geo: THREE.BufferGeometry; stone: THREE.Material }) {
+function Monolith({ work, a, geo, stone }: { work: typeof WORKS[number]; a: number; geo: THREE.BufferGeometry; stone: THREE.Material }) {
+  const { slug } = work
   const tex = useTexture(`${BASE}works/${slug}-thumb.webp`)
   tex.colorSpace = THREE.SRGBColorSpace
   const body = useRef<THREE.Mesh>(null)
   const lift = useRef<THREE.Group>(null)
   const screen = useRef<THREE.MeshBasicMaterial>(null)
+  const label = useRef<HTMLDivElement>(null)
   const hov = useRayHover(body, 2.5)
   useFrame(() => {
     const h = hov.current.amt
     if (lift.current) lift.current.position.y = h * 0.22
     if (screen.current) screen.current.color.setScalar(0.85 + h * 0.5)
+    if (label.current) { label.current.style.opacity = String(h); label.current.style.transform = `translate(-50%, ${(1 - h) * 8}px)` }
   })
   return (
     <group position={[Math.sin(a) * RING_R, 0, Math.cos(a) * RING_R]} rotation={[0, a, 0]}>
@@ -330,6 +375,9 @@ function Monolith({ slug, a, geo, stone }: { slug: string; a: number; geo: THREE
           <planeGeometry args={[1.98, 1.24]} />
           <meshBasicMaterial ref={screen} map={tex} toneMapped={false} />
         </mesh>
+        <Html position={[0, -0.75, 0.25]} zIndexRange={[8, 0]} style={{ pointerEvents: 'none' }}>
+          <div className="work-label" ref={label} style={{ opacity: 0 }}><b>{work.name}</b><span>{work.kind}</span></div>
+        </Html>
         {/* warm strip of light at the foot */}
         <mesh position={[0, -2.15, 0.25]}><boxGeometry args={[1.9, 0.03, 0.03]} /><meshBasicMaterial color={[2.4, 1.4, 0.6]} toneMapped={false} /></mesh>
       </group>
@@ -350,7 +398,42 @@ function Exhibition() {
     applyTriplanar(m, triMaps('rock_face_03'), { scale: 0.3, mix: 0.7, normal: 0.8, snow: 1, key: 'arena' })
     return m
   }, [])
-  useFrame((_, dt) => { if (ring.current) ring.current.rotation.y += dt * 0.045 })
+  // the circle turns by itself; drag sideways to spin it, it keeps some momentum
+  const spin = useRef({ angle: 0, vel: 0, drag: false, x: 0, active: false })
+  useEffect(() => {
+    const s = spin.current
+    const down = (e: PointerEvent) => { if (!s.active) return; s.drag = true; s.x = e.clientX; document.body.classList.add('is-grabbing') }
+    const move = (e: PointerEvent) => {
+      if (!s.drag) return
+      const dx = e.clientX - s.x
+      s.x = e.clientX
+      s.vel = dx * 0.0045
+      s.angle += s.vel
+    }
+    const up = () => { s.drag = false; document.body.classList.remove('is-grabbing') }
+    window.addEventListener('pointerdown', down)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      document.body.classList.remove('is-grabbing', 'can-grab')
+    }
+  }, [])
+  useFrame((_, dt) => {
+    const s = spin.current
+    const active = Math.abs(localD(4)) < 0.45
+    if (active !== s.active) { s.active = active; document.body.classList.toggle('can-grab', active) }
+    if (!s.drag) {
+      s.angle += s.vel
+      s.vel *= Math.exp(-dt * 2.5)
+      s.angle += dt * 0.035 * (1 - Math.min(1, Math.abs(s.vel) * 40))
+    }
+    if (ring.current) ring.current.rotation.y = s.angle
+  })
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.2, 0]} material={ground} receiveShadow>
@@ -363,7 +446,7 @@ function Exhibition() {
         </mesh>
       ))}
       <group ref={ring}>
-        {WORKS.map((s, i) => <Monolith key={s} slug={s} a={(i / WORKS.length) * Math.PI * 2} geo={geo} stone={stone} />)}
+        {WORKS.map((w, i) => <Monolith key={w.slug} work={w} a={(i / WORKS.length) * Math.PI * 2} geo={geo} stone={stone} />)}
       </group>
       <pointLight position={[0, 3, 0]} color="#ffe2c2" intensity={14} distance={20} />
     </group>
@@ -375,7 +458,7 @@ export function Sections() {
     <>
       <Stage chapter={1}><Depths floor={-4.5} seed={1} /><IceFloe /></Stage>
       <Stage chapter={2}><Depths floor={-6.5} seed={2} tilt /><Portal /></Stage>
-      <Stage chapter={3}><Depths floor={-5.5} seed={3} /><Thread /></Stage>
+      <Stage chapter={3}><Depths floor={-4.8} seed={3} /><Depths floor={5.2} seed={5} ceiling /><Thread /></Stage>
       <Stage chapter={4} span={2.2}><Depths floor={-1.7} seed={4} /><Exhibition /></Stage>
     </>
   )

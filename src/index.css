@@ -79,3 +79,10 @@ canvas { display: block; position: fixed !important; inset: 0; }
   /* the caption needs the bottom of a phone screen; scrolling is obvious there anyway */
   .hud > .hud__bl { display: none; }
 }
+
+body.can-grab canvas { cursor: grab; }
+body.is-grabbing, body.is-grabbing canvas { cursor: grabbing; user-select: none; }
+.work-label { display: flex; flex-direction: column; align-items: center; gap: 4px; transform: translate(-50%, 8px); white-space: nowrap;
+  color: #f4f6fa; text-transform: uppercase; letter-spacing: .14em; font-size: 10px; text-shadow: 0 0 2px rgba(20, 26, 40, .9), 0 0 10px rgba(20, 26, 40, .6); }
+.work-label b { font-weight: 500; font-size: 12px; }
+.work-label span { opacity: .75; }

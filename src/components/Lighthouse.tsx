@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { applyTriplanar, triMaps } from '../lib/triplanar'
 import { useRayHover } from '../lib/hover'
-import { HoverNet } from './HoverNet'
+import { HoverNet, type NetNode } from './HoverNet'
 
 const BASE = import.meta.env.BASE_URL
 const MODEL = `${BASE}models/lighthouse.glb`
@@ -72,10 +72,8 @@ function pushStone(c: THREE.Vector3, r: number, hit: THREE.Vector3, amt: number,
 export function Lighthouse() {
   const { scene } = useGLTF(MODEL, DRACO)
   const hoverU = useMemo(() => ({ uHover: { value: new THREE.Vector3(0, -50, 0) }, uHoverAmt: { value: 0 }, uHoverR: { value: HOVER_R } }), [])
-  const state = useRef({ version: 0, picked: [] as number[], pickedAt: new THREE.Vector3(0, -50, 0) })
   const proxy = useRef<THREE.Mesh>(null)
   const hov = useRayHover(proxy, 1.4)
-  const flash = useRef(0)
 
   const { tower, stones, core } = useMemo(() => {
     let tower: THREE.Mesh | null = null
@@ -141,9 +139,7 @@ export function Lighthouse() {
   const local = useMemo(() => new THREE.Vector3(), [])
 
   useFrame((_, dt) => {
-    const s = state.current
     const h = hov.current
-    flash.current = Math.min(1, flash.current + dt * 1.6)
     if (h.target && tower) {
       local.copy(h.point)
       tower.worldToLocal(local)
@@ -157,29 +153,29 @@ export function Lighthouse() {
       light.current.position.copy(hoverU.uHover.value)
       tower.localToWorld(light.current.position)
     }
-    // pick the stones nearest to the cursor again once it has moved far enough
-    if (h.target && hoverU.uHover.value.distanceTo(s.pickedAt) > 0.9) {
-      s.pickedAt.copy(hoverU.uHover.value)
-      s.picked = stones.map((st, i) => [st.c.distanceToSquared(s.pickedAt), i]).sort((x, y) => x[0] - y[0]).slice(0, 7).map((x) => x[1])
-        // order around the cursor so the polyline does not cross itself
-        .sort((x, y) => Math.atan2(stones[x].c.y - s.pickedAt.y, stones[x].c.x - s.pickedAt.x) - Math.atan2(stones[y].c.y - s.pickedAt.y, stones[y].c.x - s.pickedAt.x))
-      s.version++
-      flash.current = 0
-    }
   })
 
-  const netPoints = (out: THREE.Vector3[]) => {
+  // the web holds the stones nearest to the (smoothed) cursor, re-picked every frame
+  const order = useMemo(() => stones.map((_, i) => i), [stones])
+  const dist = useMemo(() => new Float32Array(stones.length), [stones])
+  const netNodes = (out: NetNode[]) => {
     if (!tower) return 0
-    const s = state.current
-    s.picked.forEach((i, k) => {
+    const hit = hoverU.uHover.value
+    for (let i = 0; i < stones.length; i++) dist[i] = stones[i].c.distanceToSquared(hit)
+    order.sort((x, y) => dist[x] - dist[y])
+    const n = Math.min(out.length, 7)
+    for (let k = 0; k < n; k++) {
+      const i = order[k]
       const st = stones[i]
-      pushStone(st.c, st.r, hoverU.uHover.value, hoverU.uHoverAmt.value, out[k])
+      const q = out[k].p
+      pushStone(st.c, st.r, hit, hoverU.uHoverAmt.value, q)
       // a little in front of the stone face
-      const len = Math.max(Math.hypot(out[k].x, out[k].z), 1e-4)
-      out[k].x += (out[k].x / len) * 0.14; out[k].z += (out[k].z / len) * 0.14
-      tower.localToWorld(out[k])
-    })
-    return s.picked.length
+      const len = Math.max(Math.hypot(q.x, q.z), 1e-4)
+      q.x += (q.x / len) * 0.14; q.z += (q.z / len) * 0.14
+      tower.localToWorld(q)
+      out[k].id = i
+    }
+    return n
   }
 
   return (
@@ -191,7 +187,7 @@ export function Lighthouse() {
         <meshBasicMaterial />
       </mesh>
       <pointLight ref={light} color="#ffb47a" intensity={0} distance={3.5} decay={2} />
-      <HoverNet points={netPoints} amount={() => { const f = flash.current; return hoverU.uHoverAmt.value * f * f * (3 - 2 * f) }} version={() => state.current.version} />
+      <HoverNet nodes={netNodes} amount={() => hoverU.uHoverAmt.value} />
     </group>
   )
 }
