@@ -31,13 +31,14 @@ export function segment(p: number) {
   const c = clamp01(p) * (N - 1)
   const i = Math.min(Math.floor(c), N - 2)
   const u = c - i
-  return { i, e: smoother(clamp01((u - 0.18) / 0.64)) }
+  // scenes hold still for most of the scroll; the flight itself is a short stretch in the middle
+  return { i, e: smoother(clamp01((u - 0.32) / 0.36)) }
 }
 
 /** 0..1 darkness of the transition veil. */
 export function darknessAt(p: number) {
   const { i, e } = segment(p)
-  return Math.pow(Math.sin(e * Math.PI), 1.6) * DARK[i]
+  return Math.pow(Math.sin(e * Math.PI), 2.2) * DARK[i]
 }
 
 export const chapterAt = (p: number) => Math.min(CHAPTERS.length - 1, Math.round(p * (CHAPTERS.length - 1)))

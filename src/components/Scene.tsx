@@ -120,8 +120,8 @@ function FogRig() {
     fog.far = THREE.MathUtils.lerp(FOG[i].far, FOG[i + 1].far, u)
     // mid-dive the fog closes in, the world dissolves before the next scene comes out of it
     const dive = darknessAt(progress.v)
-    fog.near *= 1 - dive * 0.9
-    fog.far *= 1 - dive * 0.75
+    fog.near *= 1 - dive * 0.7
+    fog.far *= 1 - dive * 0.5
   })
   return null
 }
