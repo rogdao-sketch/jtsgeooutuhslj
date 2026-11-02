@@ -14,11 +14,12 @@ float noise(vec2 p) {
   return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
              mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
 }
+// the fog is a smooth backdrop: three octaves read the same as five and cost 40% less per pixel
 float fbm(vec2 p) {
   float v = 0.0, a = 0.5;
   mat2 r = mat2(0.8, -0.6, 0.6, 0.8);
-  for (int i = 0; i < 5; i++) { v += a * noise(p); p = r * p * 2.03 + 11.7; a *= 0.5; }
-  return v;
+  for (int i = 0; i < 3; i++) { v += a * noise(p); p = r * p * 2.03 + 11.7; a *= 0.5; }
+  return v * 1.14;
 }
 
 void main() {

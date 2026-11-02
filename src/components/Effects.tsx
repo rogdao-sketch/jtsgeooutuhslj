@@ -69,9 +69,10 @@ export function Effects() {
     // one convolution effect per pass
     if (quality.lensEffects) c.addPass(new EffectPass(camera, dof))
     c.addPass(new EffectPass(camera, bloom))
-    c.addPass(new EffectPass(camera, zoom))
+    const zoomPass = new EffectPass(camera, zoom)
+    c.addPass(zoomPass)
     c.addPass(new EffectPass(camera, tone, veil, vignette, noise))
-    c.userData = { dof, veil, zoom }
+    c.userData = { dof, veil, zoom, zoomPass }
     if (quality.lensEffects) c.addPass(new EffectPass(camera, fringe))
     return c
   }, [gl, scene, camera])
@@ -80,12 +81,14 @@ export function Effects() {
   useEffect(() => () => composer.dispose(), [composer])
   useFrame((_, dt) => {
     // transitions blur out of focus and back
-    const { dof, veil, zoom } = composer.userData as { dof: { bokehScale: number }; veil: { uniforms: Map<string, Uniform> }; zoom: { uniforms: Map<string, Uniform> } }
+    const { dof, veil, zoom, zoomPass } = composer.userData as { dof: { bokehScale: number }; veil: { uniforms: Map<string, Uniform> }; zoom: { uniforms: Map<string, Uniform> }; zoomPass: { enabled: boolean } }
     const dive = darknessAt(progress.v)
     // no lens blur at the works: the screens must stay readable
     dof.bokehScale = (2.2 + dive * 7) * (1 - THREE.MathUtils.smoothstep(progress.v, 0.66, 0.74))
     veil.uniforms.get('uAmount')!.value = dive
-    zoom.uniforms.get('uStrength')!.value = Math.pow(dive, 1.5) * 0.14
+    const zs = Math.pow(dive, 1.5) * 0.14
+    zoom.uniforms.get('uStrength')!.value = zs
+    zoomPass.enabled = zs > 0.0005 // a full-screen pass for nothing while the camera is calm
     veil.uniforms.get('uTime')!.value += dt
     const fog = scene.fog as THREE.Fog | null
     if (fog) (veil.uniforms.get('uColor')!.value as THREE.Color).copy(fog.color)

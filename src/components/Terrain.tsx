@@ -84,7 +84,7 @@ export function Terrain() {
       ray.setFromCamera(pointer, camera)
       const o = ray.ray.origin, d = ray.ray.direction
       let t0 = 0
-      for (let t = 0.5; t < 160; t += 0.6) {
+      for (let t = 0.5; t < 160; t += 0.5 + t * 0.012) {
         p.copy(o).addScaledVector(d, t)
         if (p.y < heightAt(p.x, p.z)) {
           let lo = t0, hi = t

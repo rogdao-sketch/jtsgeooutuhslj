@@ -17,11 +17,11 @@ export const hasWebGL2 = (() => {
 })()
 
 export const quality = {
-  maxDpr: LOW ? 1.5 : 2,
-  terrainSeg: LOW ? 170 : 320,
+  maxDpr: LOW ? 1.25 : 1.5,
+  terrainSeg: LOW ? 150 : 240,
   particles: REDUCED ? 600 : LOW ? 1200 : 2600,
-  shadowMap: LOW ? 1024 : 2048,
-  multisampling: LOW ? 0 : 4,
+  shadowMap: LOW ? 1024 : 1536,
+  multisampling: LOW ? 0 : 2,
   /** depth of field and chromatic fringing are the most expensive passes */
   lensEffects: !LOW,
 }
